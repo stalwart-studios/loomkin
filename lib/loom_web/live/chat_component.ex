@@ -54,7 +54,7 @@ defmodule LoomWeb.ChatComponent do
                   <span class="text-xs font-bold text-white">L</span>
                 </div>
                 <div class="border-l-2 border-violet-500/40 pl-3 py-0.5">
-                  <div class="prose prose-invert prose-sm max-w-none chat-markdown">
+                  <div class="max-w-none chat-markdown">
                     {render_markdown(msg.content)}
                   </div>
                 </div>

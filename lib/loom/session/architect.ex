@@ -62,14 +62,24 @@ defmodule Loom.Session.Architect do
     architect_model = resolve_architect_model(opts)
     editor_model = resolve_editor_model(opts)
 
+    Logger.info("[Architect] Starting run — architect=#{architect_model} editor=#{editor_model} session=#{state.id}")
     broadcast(state.id, {:architect_phase, :planning})
 
     case plan(user_text, state, architect_model: architect_model) do
       {:ok, plan_data, state} ->
-        broadcast(state.id, {:architect_phase, :executing})
-        execute_plan(plan_data, state, editor_model: editor_model)
+        steps = plan_data["plan"] || []
+
+        if steps == [] do
+          Logger.info("[Architect] Plan returned 0 steps — falling back to conversational response")
+          conversational_fallback(user_text, state, architect_model)
+        else
+          Logger.info("[Architect] Plan succeeded with #{length(steps)} steps, executing...")
+          broadcast(state.id, {:architect_phase, :executing})
+          execute_plan(plan_data, state, editor_model: editor_model)
+        end
 
       {:error, reason, state} ->
+        Logger.error("[Architect] Plan phase failed: #{inspect(reason)}")
         {:error, reason, state}
     end
   end
@@ -124,17 +134,9 @@ defmodule Loom.Session.Architect do
     state = %{state | messages: state.messages ++ [user_msg]}
     broadcast(state.id, {:new_message, state.id, user_msg})
 
-    opts =
-      [
-        response_format: %{
-          type: "json_schema",
-          json_schema: %{
-            name: "edit_plan",
-            schema: @plan_schema,
-            strict: true
-          }
-        }
-      ]
+    # NOTE: We rely on the prompt to produce JSON rather than response_format,
+    # since not all providers support structured output (e.g. zai).
+    opts = []
 
     telemetry_meta = %{
       session_id: state.id,
@@ -147,32 +149,45 @@ defmodule Loom.Session.Architect do
          end) do
       {:ok, response} ->
         text = extract_text(response)
+        Logger.debug("[Architect] Plan response received, parsing... (#{String.length(text)} chars)")
 
         case parse_plan(text) do
           {:ok, plan_data} ->
-            # Save architect response
-            plan_summary = format_plan_summary(plan_data)
+            steps = plan_data["plan"] || []
+            Logger.debug("[Architect] Parsed plan: #{length(steps)} steps — #{inspect(plan_data, limit: 500)}")
 
-            {:ok, _} =
-              Persistence.save_message(%{
-                session_id: state.id,
-                role: :assistant,
-                content: plan_summary
-              })
+            # Only save/broadcast the plan summary when there are actual steps.
+            # Empty plans (conversational requests) are handled by the fallback.
+            state =
+              if steps != [] do
+                plan_summary = format_plan_summary(plan_data)
 
-            assistant_msg = %{role: :assistant, content: plan_summary}
-            state = %{state | messages: state.messages ++ [assistant_msg]}
-            broadcast(state.id, {:new_message, state.id, assistant_msg})
-            broadcast(state.id, {:architect_plan, state.id, plan_data})
+                {:ok, _} =
+                  Persistence.save_message(%{
+                    session_id: state.id,
+                    role: :assistant,
+                    content: plan_summary
+                  })
+
+                assistant_msg = %{role: :assistant, content: plan_summary}
+                state = %{state | messages: state.messages ++ [assistant_msg]}
+                broadcast(state.id, {:new_message, state.id, assistant_msg})
+                broadcast(state.id, {:architect_plan, state.id, plan_data})
+                state
+              else
+                state
+              end
 
             update_usage(state.id, response)
             {:ok, plan_data, state}
 
           {:error, reason} ->
+            Logger.error("[Architect] Failed to parse plan: #{reason}\n  Raw text: #{String.slice(text, 0, 500)}")
             {:error, "Failed to parse architect plan: #{reason}", state}
         end
 
       {:error, reason} ->
+        Logger.error("[Architect] Plan LLM call returned error: #{inspect(reason)}")
         {:error, reason, state}
     end
   end
@@ -188,6 +203,46 @@ defmodule Loom.Session.Architect do
   end
 
   # --- Private ---
+
+  defp conversational_fallback(user_text, state, model) do
+    {provider, model_id} = parse_model(model)
+
+    system_prompt = """
+    You are Loom, an AI coding assistant. Respond helpfully to the user's request.
+    You have access to the project at: #{state.project_path}
+
+    Be concise and direct. If the user is asking to explore or understand the codebase,
+    describe what you can see and suggest next steps.
+    """
+
+    messages = [
+      ReqLLM.Context.system(system_prompt),
+      ReqLLM.Context.user(user_text)
+    ]
+
+    telemetry_meta = %{session_id: state.id, model: model, architect_phase: :conversational}
+
+    case LoomTelemetry.span_llm_request(telemetry_meta, fn ->
+           call_llm(provider, model_id, messages, [])
+         end) do
+      {:ok, response} ->
+        text = extract_text(response)
+        Logger.info("[Architect] Conversational fallback responded (#{String.length(text)} chars)")
+
+        {:ok, _} =
+          Persistence.save_message(%{session_id: state.id, role: :assistant, content: text})
+
+        assistant_msg = %{role: :assistant, content: text}
+        state = %{state | messages: state.messages ++ [assistant_msg]}
+        broadcast(state.id, {:new_message, state.id, assistant_msg})
+        update_usage(state.id, response)
+        {:ok, text, state}
+
+      {:error, reason} ->
+        Logger.error("[Architect] Conversational fallback failed: #{inspect(reason)}")
+        {:error, reason, state}
+    end
+  end
 
   defp execute_plan(plan_data, state, opts) do
     editor_model = Keyword.get(opts, :editor_model, resolve_editor_model(opts))
@@ -228,6 +283,7 @@ defmodule Loom.Session.Architect do
     action = step["action"]
     details = step["details"]
     description = step["description"]
+    Logger.info("[Architect] Executing step: #{action} #{file} — #{description}")
 
     # Build a focused prompt for the editor
     editor_prompt = build_editor_prompt(file, action, description, details, state)
@@ -273,9 +329,11 @@ defmodule Loom.Session.Architect do
          end) do
       {:ok, response} ->
         classified = ReqLLM.Response.classify(response)
+        Logger.debug("[Architect] Editor iteration=#{iteration} response_type=#{classified.type}")
         handle_editor_response(classified, response, provider, model_id, messages, state, opts, iteration)
 
       {:error, reason} ->
+        Logger.error("[Architect] Editor LLM call failed iteration=#{iteration}: #{inspect(reason)}")
         {:error, reason, state}
     end
   end
@@ -284,6 +342,9 @@ defmodule Loom.Session.Architect do
     # Execute tools in the editor context
     assistant_content = classified.text || ""
     tool_calls = classified.tool_calls
+
+    tool_names = Enum.map(tool_calls, fn tc -> tc[:name] || tc["name"] end)
+    Logger.info("[Architect] Editor iteration=#{iteration} calling tools: #{Enum.join(tool_names, ", ")}")
 
     tool_call_msgs =
       Enum.map(tool_calls, fn tc ->
@@ -315,9 +376,11 @@ defmodule Loom.Session.Architect do
               end)
 
             {:error, :not_found} ->
+              Logger.warning("[Architect] Tool not found: #{tool_name}")
               "Error: Tool '#{tool_name}' not found"
           end
 
+        Logger.debug("[Architect] Tool #{tool_name} result: #{String.slice(to_string(result_text), 0, 200)}")
         broadcast(st.id, {:tool_executing, st.id, tool_name})
         broadcast(st.id, {:tool_complete, st.id, tool_name, result_text})
 
@@ -472,7 +535,7 @@ defmodule Loom.Session.Architect do
       |> Enum.with_index(1)
       |> Enum.map(fn {%{step: step, status: status, result: result}, i} ->
         status_icon = if status == :ok, do: "[OK]", else: "[FAILED]"
-        result_preview = String.slice(to_string(result), 0, 200)
+        result_preview = safe_truncate(to_string(result), 200)
         "#{i}. #{status_icon} #{step["action"]} `#{step["file"]}` — #{result_preview}"
       end)
       |> Enum.join("\n")
@@ -490,10 +553,30 @@ defmodule Loom.Session.Architect do
     """
   end
 
+  # Truncate text safely — close any open code fences to avoid breaking markdown
+  defp safe_truncate(text, max_len) do
+    if String.length(text) <= max_len do
+      text
+    else
+      truncated = String.slice(text, 0, max_len)
+      # Count backtick fences — if odd, we have an unclosed fence
+      fence_count = length(Regex.scan(~r/```/, truncated))
+
+      if rem(fence_count, 2) == 1 do
+        truncated <> "\n```\n... (truncated)"
+      else
+        truncated <> "... (truncated)"
+      end
+    end
+  end
+
   defp run_and_format_tool(tool_module, tool_args, context) do
+    # LLM sends string keys — Jido.Exec expects atom keys for NimbleOptions validation
+    normalized_args = atomize_keys(tool_args)
+
     result =
       try do
-        Jido.Exec.run(tool_module, tool_args, context, timeout: 60_000)
+        Jido.Exec.run(tool_module, normalized_args, context, timeout: 60_000)
       rescue
         e -> {:error, Exception.message(e)}
       end
@@ -515,12 +598,23 @@ defmodule Loom.Session.Architect do
 
   defp call_llm(provider, model_id, messages, opts) do
     model_spec = "#{provider}:#{model_id}"
+    Logger.debug("[Architect] Calling LLM model=#{model_spec} msg_count=#{length(messages)} opts=#{inspect(Map.keys(Map.new(opts)))}")
 
-    try do
-      ReqLLM.generate_text(model_spec, messages, opts)
-    rescue
-      e -> {:error, Exception.message(e)}
+    result =
+      try do
+        ReqLLM.generate_text(model_spec, messages, opts)
+      rescue
+        e ->
+          Logger.error("[Architect] LLM call crashed: #{Exception.message(e)}")
+          {:error, Exception.message(e)}
+      end
+
+    case result do
+      {:ok, _} -> Logger.debug("[Architect] LLM call succeeded for #{model_spec}")
+      {:error, reason} -> Logger.error("[Architect] LLM call failed for #{model_spec}: #{inspect(reason)}")
     end
+
+    result
   end
 
   defp build_req_messages(windowed_messages) do
@@ -545,6 +639,15 @@ defmodule Loom.Session.Architect do
           ReqLLM.Context.tool_result(msg[:tool_call_id] || "", msg.content || "")
       end
     end)
+  end
+
+  defp atomize_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_binary(k) -> {String.to_existing_atom(k), v}
+      {k, v} -> {k, v}
+    end)
+  rescue
+    ArgumentError -> map
   end
 
   defp parse_model(model_string) do

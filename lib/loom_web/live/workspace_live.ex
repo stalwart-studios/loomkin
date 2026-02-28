@@ -4,6 +4,8 @@ defmodule LoomWeb.WorkspaceLive do
   alias Loom.Session
   alias Loom.Session.Manager
 
+  require Logger
+
   @default_model "anthropic:claude-sonnet-4-6"
 
   def mount(params, _session, socket) do
@@ -254,12 +256,28 @@ defmodule LoomWeb.WorkspaceLive do
   end
 
   # Handle async task completion
-  def handle_info({ref, _result}, socket) when is_reference(ref) do
+  def handle_info({ref, result}, socket) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
+
+    case result do
+      {:ok, _response} ->
+        Logger.debug("[WorkspaceLive] Async task completed successfully")
+
+      {:error, reason} ->
+        Logger.error("[WorkspaceLive] Async task returned error: #{inspect(reason)}")
+
+      other ->
+        Logger.warning("[WorkspaceLive] Async task returned unexpected result: #{inspect(other)}")
+    end
+
     {:noreply, assign(socket, async_task: nil)}
   end
 
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, socket) do
+  def handle_info({:DOWN, _ref, :process, _pid, reason}, socket) do
+    if reason != :normal do
+      Logger.error("[WorkspaceLive] Async task crashed: #{inspect(reason)}")
+    end
+
     {:noreply, assign(socket, async_task: nil)}
   end
 

@@ -120,16 +120,19 @@ defmodule Loom.Session do
 
   @impl true
   def handle_call({:send_message, text}, _from, state) do
+    Logger.info("[Session] send_message session=#{state.id} model=#{state.model} text=#{String.slice(text, 0, 100)}")
     state = update_status(state, :thinking)
 
     # Always use architect mode — plan with primary model, execute with
     # secondary model only when the user has explicitly configured one.
     case Architect.run(text, state, architect_model: state.model) do
       {:ok, response_text, state} ->
+        Logger.info("[Session] Architect.run succeeded session=#{state.id}")
         state = update_status(state, :idle)
         {:reply, {:ok, response_text}, state}
 
       {:error, reason, state} ->
+        Logger.error("[Session] Architect.run failed session=#{state.id}: #{inspect(reason)}")
         state = update_status(state, :idle)
         {:reply, {:error, reason}, state}
     end
