@@ -133,8 +133,14 @@ defmodule Loom.Session.Architect do
       architect_phase: :plan
     }
 
-    case LoomTelemetry.span_llm_request(telemetry_meta, fn ->
-           call_llm(provider, model_id, req_messages, [{:session_id, state.id} | opts])
+    on_retry = fn attempt, reason, backoff_ms ->
+      broadcast(state.id, {:llm_retry, state.id, %{attempt: attempt, reason: inspect(reason), backoff_ms: backoff_ms}})
+    end
+
+    case Loom.LLMRetry.with_retry([on_retry: on_retry], fn ->
+           LoomTelemetry.span_llm_request(telemetry_meta, fn ->
+             call_llm(provider, model_id, req_messages, [{:session_id, state.id} | opts])
+           end)
          end) do
       {:ok, response} ->
         # Check if the architect chose to use tools (e.g. team_spawn) instead of a JSON plan
@@ -147,9 +153,10 @@ defmodule Loom.Session.Architect do
         else
           text = extract_text(response)
           Logger.debug("[Architect] Plan response received, parsing... (#{String.length(text)} chars)")
+          update_usage(state.id, response)
 
-          case parse_plan(text) do
-            {:ok, plan_data} ->
+          case parse_plan_with_retry(text, provider, model_id, req_messages, state, opts) do
+            {:ok, plan_data, state} ->
               steps = plan_data["plan"] || []
               Logger.debug("[Architect] Parsed plan: #{length(steps)} steps — #{inspect(plan_data, limit: 500)}")
 
@@ -173,11 +180,10 @@ defmodule Loom.Session.Architect do
                   state
                 end
 
-              update_usage(state.id, response)
               {:ok, plan_data, state}
 
-            {:error, reason} ->
-              Logger.error("[Architect] Failed to parse plan: #{reason}\n  Raw text: #{String.slice(text, 0, 500)}")
+            {:error, reason, state} ->
+              Logger.error("[Architect] Failed to parse plan after retries: #{reason}")
               {:error, "Failed to parse architect plan: #{reason}", state}
           end
         end
@@ -316,8 +322,14 @@ defmodule Loom.Session.Architect do
 
     telemetry_meta = %{session_id: state.id, model: model, architect_phase: :conversational}
 
-    case LoomTelemetry.span_llm_request(telemetry_meta, fn ->
-           call_llm(provider, model_id, messages, [session_id: state.id])
+    on_retry = fn attempt, reason, backoff_ms ->
+      broadcast(state.id, {:llm_retry, state.id, %{attempt: attempt, reason: inspect(reason), backoff_ms: backoff_ms}})
+    end
+
+    case Loom.LLMRetry.with_retry([on_retry: on_retry], fn ->
+           LoomTelemetry.span_llm_request(telemetry_meta, fn ->
+             call_llm(provider, model_id, messages, [session_id: state.id])
+           end)
          end) do
       {:ok, response} ->
         text = extract_text(response)
@@ -418,8 +430,14 @@ defmodule Loom.Session.Architect do
       iteration: iteration
     }
 
-    case LoomTelemetry.span_llm_request(telemetry_meta, fn ->
-           call_llm(provider, model_id, messages, [{:session_id, state.id} | opts])
+    on_retry = fn attempt, reason, backoff_ms ->
+      broadcast(state.id, {:llm_retry, state.id, %{attempt: attempt, reason: inspect(reason), backoff_ms: backoff_ms}})
+    end
+
+    case Loom.LLMRetry.with_retry([on_retry: on_retry], fn ->
+           LoomTelemetry.span_llm_request(telemetry_meta, fn ->
+             call_llm(provider, model_id, messages, [{:session_id, state.id} | opts])
+           end)
          end) do
       {:ok, response} ->
         classified = ReqLLM.Response.classify(response)
@@ -584,6 +602,58 @@ defmodule Loom.Session.Architect do
     else
       # Fall back to all tools if we can't filter
       Jido.AI.ToolAdapter.from_actions(tools)
+    end
+  end
+
+  @max_json_retries 2
+
+  defp parse_plan_with_retry(text, provider, model_id, req_messages, state, opts) do
+    case parse_plan(text) do
+      {:ok, plan_data} ->
+        {:ok, plan_data, state}
+
+      {:error, reason} ->
+        retry_json_parse(text, reason, provider, model_id, req_messages, state, opts, 0)
+    end
+  end
+
+  defp retry_json_parse(_text, reason, _provider, _model_id, _req_messages, state, _opts, attempt)
+       when attempt >= @max_json_retries do
+    {:error, reason, state}
+  end
+
+  defp retry_json_parse(text, reason, provider, model_id, req_messages, state, opts, attempt) do
+    Logger.warning("[Architect] JSON parse failed (attempt #{attempt + 1}/#{@max_json_retries}), asking LLM to fix: #{reason}")
+    broadcast(state.id, {:llm_retry, state.id, %{attempt: attempt + 1, reason: "JSON parse error: #{reason}", backoff_ms: 0}})
+
+    fix_msg = ReqLLM.Context.user("""
+    Your previous response was not valid JSON. Parse error: #{reason}
+
+    Please respond with ONLY a valid JSON object containing:
+    - "summary": brief description string
+    - "plan": array of steps, each with "file", "action", "description", "details"
+
+    Your previous response started with: #{String.slice(text, 0, 200)}
+    """)
+
+    corrected_messages = req_messages ++ [ReqLLM.Context.assistant(text), fix_msg]
+
+    case call_llm(provider, model_id, corrected_messages, [{:session_id, state.id} | opts]) do
+      {:ok, response} ->
+        update_usage(state.id, response)
+        corrected_text = extract_text(response)
+
+        case parse_plan(corrected_text) do
+          {:ok, plan_data} ->
+            Logger.info("[Architect] JSON parse retry #{attempt + 1} succeeded")
+            {:ok, plan_data, state}
+
+          {:error, new_reason} ->
+            retry_json_parse(corrected_text, new_reason, provider, model_id, req_messages, state, opts, attempt + 1)
+        end
+
+      {:error, llm_reason} ->
+        {:error, "LLM retry failed: #{inspect(llm_reason)}", state}
     end
   end
 
@@ -799,27 +869,9 @@ defmodule Loom.Session.Architect do
     end)
   end
 
-  defp atomize_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {k, v} when is_binary(k) -> {safe_to_atom(k), atomize_keys(v)}
-      {k, v} -> {k, atomize_keys(v)}
-    end)
-  end
-
-  defp atomize_keys(list) when is_list(list), do: Enum.map(list, &atomize_keys/1)
-  defp atomize_keys(value), do: value
-
-  # Convert a string key to an atom, handling each key individually so one
-  # unknown key doesn't cause the entire map to fall back to string keys.
-  # Uses to_existing_atom first (safe), falls back to to_atom with a size
-  # guard for LLM-generated tool params which are schema-bounded.
-  defp safe_to_atom(s) when is_binary(s) and byte_size(s) < 256 do
-    String.to_existing_atom(s)
-  rescue
-    ArgumentError -> String.to_atom(s)
-  end
-
-  defp safe_to_atom(s), do: s
+  # Delegate to Registry.atomize_keys which uses a known-key allowlist
+  # instead of String.to_atom, preventing atom table exhaustion from LLM output.
+  defp atomize_keys(data), do: Loom.Tools.Registry.atomize_keys(data)
 
   defp parse_model(model_string) do
     case String.split(model_string, ":", parts: 2) do

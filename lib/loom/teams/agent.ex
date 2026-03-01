@@ -606,6 +606,47 @@ defmodule Loom.Teams.Agent do
   end
 
   @impl true
+  def handle_info({:request_review, from, %{file: file, changes: changes} = payload}, state) do
+    question_text =
+      case payload[:question] do
+        nil -> ""
+        q -> "\nQuestion: #{q}"
+      end
+
+    review_msg = %{
+      role: :user,
+      content: """
+      [Review Request from #{from}]
+      File: #{file}
+      Changes:
+      #{changes}#{question_text}
+
+      Please review these changes and provide feedback using peer_message.\
+      """
+    }
+
+    {:noreply, %{state | messages: state.messages ++ [review_msg]}}
+  end
+
+  @impl true
+  def handle_info({:tasks_unblocked, task_ids}, state) do
+    Logger.debug("[Agent:#{state.name}] Tasks unblocked: #{inspect(task_ids)}")
+
+    msg = %{
+      role: :system,
+      content: "[System] Tasks now available: #{Enum.join(task_ids, ", ")}. Use team_progress to see details."
+    }
+
+    {:noreply, %{state | messages: state.messages ++ [msg]}}
+  end
+
+  @impl true
+  def handle_info({:role_change_request, agent_name, old_role, new_role, _request_id}, state) do
+    Logger.debug("[Agent:#{state.name}] Role change request: #{agent_name} #{old_role} -> #{new_role}")
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end

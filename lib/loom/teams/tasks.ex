@@ -22,7 +22,6 @@ defmodule Loom.Teams.Tasks do
     |> Repo.update()
     |> tap_ok(fn task ->
       Comms.broadcast_task_event(task.team_id, {:task_assigned, task.id, agent_name})
-      Comms.send_to(task.team_id, agent_name, {:task_assigned, task.id, agent_name})
       Context.cache_task(task.team_id, task.id, %{title: task.title, status: :assigned, owner: agent_name})
     end)
   end

@@ -55,8 +55,15 @@ defmodule Loom.Teams.ModelRouter do
   def record_failure(team_id, agent_name, task_id) do
     init_if_needed()
     key = {:failures, team_id, agent_name, task_id}
-    current = lookup_or_default(key, 0)
-    :ets.insert(@table, {key, current + 1})
+
+    try do
+      :ets.update_counter(@table, key, 1)
+    catch
+      :error, :badarg ->
+        # Key doesn't exist yet — initialize it
+        :ets.insert(@table, {key, 1})
+    end
+
     :ok
   end
 
@@ -101,10 +108,16 @@ defmodule Loom.Teams.ModelRouter do
     current = lookup_or_default(key, [])
     :ets.insert(@table, {key, [model | current]})
 
-    # Aggregate model stats: {successes, attempts}
+    # Aggregate model stats stored as {model_key, successes, attempts} — atomic update
     model_key = {:model_stats, model}
-    {successes, attempts} = lookup_or_default(model_key, {0, 0})
-    :ets.insert(@table, {model_key, {successes + 1, attempts + 1}})
+
+    try do
+      # Increment both successes (pos 2) and attempts (pos 3) atomically
+      :ets.update_counter(@table, model_key, [{2, 1}, {3, 1}])
+    catch
+      :error, :badarg ->
+        :ets.insert(@table, {model_key, 1, 1})
+    end
 
     :ok
   end
@@ -113,8 +126,15 @@ defmodule Loom.Teams.ModelRouter do
   def record_attempt(model) do
     init_if_needed()
     model_key = {:model_stats, model}
-    {successes, attempts} = lookup_or_default(model_key, {0, 0})
-    :ets.insert(@table, {model_key, {successes, attempts + 1}})
+
+    try do
+      # Stored as {model_key, successes, attempts} — increment attempts at position 3
+      :ets.update_counter(@table, model_key, {3, 1})
+    catch
+      :error, :badarg ->
+        :ets.insert(@table, {model_key, 0, 1})
+    end
+
     :ok
   end
 
@@ -128,9 +148,10 @@ defmodule Loom.Teams.ModelRouter do
     init_if_needed()
     model_key = {:model_stats, model}
 
-    case lookup_or_default(model_key, {0, 0}) do
-      {_successes, 0} -> 1.0
-      {successes, attempts} -> successes / attempts
+    case :ets.lookup(@table, model_key) do
+      [{^model_key, _successes, 0}] -> 1.0
+      [{^model_key, successes, attempts}] -> successes / attempts
+      [] -> 1.0
     end
   end
 

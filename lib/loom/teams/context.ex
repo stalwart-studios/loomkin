@@ -67,27 +67,49 @@ defmodule Loom.Teams.Context do
   # -- Region-Level Locking --
 
   def claim_region(team_id, agent_name, path, region) do
-    existing = list_claims(team_id, path)
+    table = team_table(team_id)
 
-    conflict =
-      Enum.find(existing, fn claim ->
-        claim.agent != agent_name and regions_overlap?(claim.region, region)
-      end)
+    claim = %{
+      agent: agent_name,
+      path: path,
+      region: region,
+      claimed_at: System.monotonic_time(:millisecond)
+    }
 
-    case conflict do
-      nil ->
-        claim = %{
-          agent: agent_name,
-          path: path,
-          region: region,
-          claimed_at: System.monotonic_time(:millisecond)
-        }
+    # Try atomic insert first — succeeds if no claim exists for this agent+path
+    case :ets.insert_new(table, {{:claim, path, agent_name}, claim}) do
+      true ->
+        # Inserted; now check for conflicts with other agents
+        existing = list_claims(team_id, path)
 
-        :ets.insert(team_table(team_id), {{:claim, path, agent_name}, claim})
-        :ok
+        conflict =
+          Enum.find(existing, fn c ->
+            c.agent != agent_name and regions_overlap?(c.region, region)
+          end)
 
-      other ->
-        {:conflict, other.agent, other.region}
+        case conflict do
+          nil -> :ok
+          other ->
+            # Roll back our claim and report conflict
+            :ets.delete(table, {:claim, path, agent_name})
+            {:conflict, other.agent, other.region}
+        end
+
+      false ->
+        # Agent already has a claim on this path — update it
+        :ets.insert(table, {{:claim, path, agent_name}, claim})
+
+        existing = list_claims(team_id, path)
+
+        conflict =
+          Enum.find(existing, fn c ->
+            c.agent != agent_name and regions_overlap?(c.region, region)
+          end)
+
+        case conflict do
+          nil -> :ok
+          other -> {:conflict, other.agent, other.region}
+        end
     end
   end
 

@@ -38,9 +38,24 @@ defmodule Loom.Teams.QueryRouter do
 
   # --- GenServer Callbacks ---
 
+  @stale_check_interval_ms 60_000
+
   @impl true
   def init(_opts) do
+    Process.send_after(self(), :expire_stale, @stale_check_interval_ms)
     {:ok, %{queries: %{}}}
+  end
+
+  @impl true
+  def handle_info(:expire_stale, state) do
+    now = System.monotonic_time(:millisecond)
+
+    {_expired, remaining} =
+      state.queries
+      |> Enum.split_with(fn {_id, q} -> now - q.created_at >= @stale_check_interval_ms end)
+
+    Process.send_after(self(), :expire_stale, @stale_check_interval_ms)
+    {:noreply, %{state | queries: Map.new(remaining)}}
   end
 
   @impl true

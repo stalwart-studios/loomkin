@@ -33,6 +33,10 @@ defmodule Loom.Config do
       enabled: true,
       enforce_pre_edit: false,
       auto_log_commits: true
+    },
+    shell: %{
+      allowlist_enabled: false,
+      allowlist: ~w(mix elixir iex git cat head tail ls find grep rg sed awk echo mkdir cp mv touch node npm npx yarn bun cargo rustc go python python3 pip ruby gem)
     }
   }
 
@@ -128,9 +132,10 @@ defmodule Loom.Config do
   end
 
   # Known config keys that may appear in .loom.toml
-  @known_keys ~w(model permissions context decisions mcp web lsp repo
+  @known_keys ~w(model permissions context decisions mcp web lsp repo shell
     default weak architect editor auto_approve max_repo_map_tokens max_decision_context_tokens
     reserved_output_tokens enabled enforce_pre_edit auto_log_commits
+    allowlist_enabled allowlist
     servers name command args url port server_enabled watch_enabled
     teams budget max_per_team_usd max_per_agent_usd max_per_agent_tokens provider_limits
     models grunt standard expert architect escalation

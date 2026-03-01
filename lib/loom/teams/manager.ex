@@ -195,8 +195,17 @@ defmodule Loom.Teams.Manager do
     agents = list_agents(team_id)
     Enum.each(agents, fn agent -> stop_agent(team_id, agent.name) end)
 
+    # Stop all context keepers
+    keepers = list_keepers(team_id)
+    Enum.each(keepers, fn keeper ->
+      if Process.alive?(keeper.pid), do: Distributed.terminate_child(keeper.pid)
+    end)
+
     # Reset rate limiter budget
     Loom.Teams.RateLimiter.reset_team(team_id)
+
+    # Reset cost tracker
+    Loom.Teams.CostTracker.reset_team(team_id)
 
     # Remove from parent's sub_teams list
     remove_from_parent(team_id)

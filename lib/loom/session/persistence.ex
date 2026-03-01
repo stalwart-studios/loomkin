@@ -77,25 +77,23 @@ defmodule Loom.Session.Persistence do
   end
 
   @spec update_costs(String.t(), integer(), integer(), Decimal.t() | number()) ::
-          {:ok, Session.t()} | {:error, Ecto.Changeset.t()}
+          :ok | {:error, :not_found}
   def update_costs(session_id, prompt_tokens, completion_tokens, cost_usd) do
-    case get_session(session_id) do
-      nil ->
-        {:error, :not_found}
+    cost_float =
+      case cost_usd do
+        %Decimal{} -> Decimal.to_float(cost_usd)
+        n when is_number(n) -> n / 1
+        _ -> 0.0
+      end
 
-      session ->
-        new_prompt = session.prompt_tokens + prompt_tokens
-        new_completion = session.completion_tokens + completion_tokens
+    {count, _} =
+      Session
+      |> where([s], s.id == ^session_id)
+      |> update([s], inc: [prompt_tokens: ^prompt_tokens, completion_tokens: ^completion_tokens])
+      |> update([s], set: [cost_usd: fragment("COALESCE(?, 0) + ?", s.cost_usd, ^cost_float)])
+      |> Repo.update_all([])
 
-        new_cost =
-          Decimal.add(session.cost_usd, Decimal.new(to_string(cost_usd)))
-
-        update_session(session, %{
-          prompt_tokens: new_prompt,
-          completion_tokens: new_completion,
-          cost_usd: new_cost
-        })
-    end
+    if count > 0, do: :ok, else: {:error, :not_found}
   end
 
   defp maybe_filter_status(query, nil), do: query

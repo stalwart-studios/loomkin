@@ -16,25 +16,39 @@ defmodule Loom.Teams.CostTracker do
     :ok
   end
 
+  # Cost is stored as integer microdollars (cost * 1_000_000) for atomic update_counter.
+  @cost_scale 1_000_000
+
   @doc "Record usage for an agent within a team."
   def record_usage(team_id, agent_name, %{} = usage) do
     init_if_needed()
     key = {:agent, team_id, agent_name}
 
-    current = lookup_or_default(key, default_agent_usage())
+    input = usage[:input_tokens] || 0
+    output = usage[:output_tokens] || 0
+    cost_micros = round(resolve_cost(usage) * @cost_scale)
 
-    cost = resolve_cost(usage)
+    try do
+      # Atomic increment: {key, input_tokens, output_tokens, cost_micros, requests, last_model}
+      # Positions:         1     2              3               4             5        6
+      :ets.update_counter(@table, key, [{2, input}, {3, output}, {4, cost_micros}, {5, 1}])
+    catch
+      :error, :badarg ->
+        # Key doesn't exist — initialize as tuple
+        :ets.insert(@table, {key, input, output, cost_micros, 1, usage[:model]})
+    end
 
-    updated = %{
-      current
-      | input_tokens: current.input_tokens + (usage[:input_tokens] || 0),
-        output_tokens: current.output_tokens + (usage[:output_tokens] || 0),
-        cost: current.cost + cost,
-        requests: current.requests + 1,
-        last_model: usage[:model] || current.last_model
-    }
+    # Update last_model separately (non-numeric field)
+    if usage[:model] do
+      case :ets.lookup(@table, key) do
+        [{^key, in_t, out_t, c, r, _old_model}] ->
+          :ets.insert(@table, {key, in_t, out_t, c, r, usage[:model]})
 
-    :ets.insert(@table, {key, updated})
+        _ ->
+          :ok
+      end
+    end
+
     :ok
   end
 
@@ -75,7 +89,14 @@ defmodule Loom.Teams.CostTracker do
   def get_agent_usage(team_id, agent_name) do
     init_if_needed()
     key = {:agent, team_id, agent_name}
-    lookup_or_default(key, default_agent_usage())
+
+    case :ets.lookup(@table, key) do
+      [{^key, in_t, out_t, cost_micros, reqs, model}] ->
+        %{input_tokens: in_t, output_tokens: out_t, cost: cost_micros / @cost_scale, requests: reqs, last_model: model}
+
+      _ ->
+        default_agent_usage()
+    end
   end
 
   @doc "Get per-agent usage breakdown for a team."
@@ -83,10 +104,12 @@ defmodule Loom.Teams.CostTracker do
     init_if_needed()
     :ets.tab2list(@table)
     |> Enum.filter(fn
-      {{:agent, ^team_id, _name}, _usage} -> true
+      {{:agent, ^team_id, _name}, _, _, _, _, _} -> true
       _ -> false
     end)
-    |> Map.new(fn {{:agent, ^team_id, name}, usage} -> {name, usage} end)
+    |> Map.new(fn {{:agent, ^team_id, name}, in_t, out_t, cost_micros, reqs, model} ->
+      {name, %{input_tokens: in_t, output_tokens: out_t, cost: cost_micros / @cost_scale, requests: reqs, last_model: model}}
+    end)
   end
 
   @doc "Persist cost and token totals to a TeamTask record in the database."
@@ -147,7 +170,7 @@ defmodule Loom.Teams.CostTracker do
 
     :ets.tab2list(@table)
     |> Enum.each(fn
-      {{:agent, ^team_id, _name}, _} = entry -> :ets.delete(@table, elem(entry, 0))
+      {{:agent, ^team_id, _name}, _, _, _, _, _} = entry -> :ets.delete(@table, elem(entry, 0))
       {{:calls, ^team_id, _name}, _} = entry -> :ets.delete(@table, elem(entry, 0))
       {{:escalations, ^team_id}, _} -> :ets.delete(@table, {:escalations, team_id})
       _ -> :ok

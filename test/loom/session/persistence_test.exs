@@ -115,17 +115,19 @@ defmodule Loom.Session.PersistenceTest do
   end
 
   describe "update_costs/4" do
-    test "increments token counts and cost" do
+    test "increments token counts and cost atomically" do
       {:ok, session} =
         Persistence.create_session(%{model: "m", project_path: "/tmp"})
 
-      {:ok, updated} = Persistence.update_costs(session.id, 100, 50, 0.005)
+      assert :ok = Persistence.update_costs(session.id, 100, 50, 0.005)
+      updated = Persistence.get_session(session.id)
       assert updated.prompt_tokens == 100
       assert updated.completion_tokens == 50
       assert Decimal.compare(updated.cost_usd, Decimal.new("0.005")) == :eq
 
       # Increment again
-      {:ok, updated2} = Persistence.update_costs(session.id, 200, 100, 0.01)
+      assert :ok = Persistence.update_costs(session.id, 200, 100, 0.01)
+      updated2 = Persistence.get_session(session.id)
       assert updated2.prompt_tokens == 300
       assert updated2.completion_tokens == 150
       assert Decimal.compare(updated2.cost_usd, Decimal.new("0.015")) == :eq

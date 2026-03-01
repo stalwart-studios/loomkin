@@ -14,6 +14,7 @@ defmodule Loom.AgentLoop do
   require Logger
 
   @default_max_iterations 25
+  @max_rate_limit_retries 3
 
   @type on_event :: (atom(), map() -> :ok)
 
@@ -46,7 +47,10 @@ defmodule Loom.AgentLoop do
           | {:pending_permission, map(), [map()]}
   def run(messages, opts) do
     config = build_config(opts)
+    run_with_rate_limit_retry(messages, config, 0)
+  end
 
+  defp run_with_rate_limit_retry(messages, config, attempt) do
     try do
       do_loop(messages, config, 0)
     catch
@@ -54,6 +58,18 @@ defmodule Loom.AgentLoop do
         error_msg = "Budget exceeded (#{scope}). Stopping agent loop."
         Logger.warning(error_msg)
         {:error, error_msg, messages}
+
+      {:rate_limited, provider} ->
+        if attempt < @max_rate_limit_retries do
+          backoff_ms = Integer.pow(2, attempt) * 1_000
+          Logger.warning("Rate limited by #{provider}, retry #{attempt + 1}/#{@max_rate_limit_retries} after #{backoff_ms}ms")
+          config.on_event.(:rate_limited, %{provider: provider, retry: attempt + 1, backoff_ms: backoff_ms})
+          Process.sleep(backoff_ms)
+          run_with_rate_limit_retry(messages, config, attempt + 1)
+        else
+          Logger.warning("Rate limited by #{provider}, max retries (#{@max_rate_limit_retries}) exhausted")
+          {:error, :rate_limited, messages}
+        end
     end
   end
 
@@ -132,8 +148,14 @@ defmodule Loom.AgentLoop do
 
     Logger.debug("AgentLoop calling LLM: #{provider}:#{model_id}, #{length(req_messages)} messages, #{length(opts[:tools] || [])} tools")
 
-    case LoomTelemetry.span_llm_request(telemetry_meta, fn ->
-           call_llm(provider, model_id, req_messages, [{:stream_config, config} | opts])
+    on_retry = fn attempt, reason, backoff_ms ->
+      emit(config, :llm_retry, %{attempt: attempt, reason: inspect(reason), backoff_ms: backoff_ms})
+    end
+
+    case Loom.LLMRetry.with_retry([on_retry: on_retry], fn ->
+           LoomTelemetry.span_llm_request(telemetry_meta, fn ->
+             call_llm(provider, model_id, req_messages, [{:stream_config, config} | opts])
+           end)
          end) do
       {:ok, response} ->
         classified = ReqLLM.Response.classify(response)

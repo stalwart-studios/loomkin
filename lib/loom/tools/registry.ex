@@ -91,20 +91,39 @@ defmodule Loom.Tools.Registry do
     end
   end
 
-  defp atomize_keys(map) when is_map(map) do
+  # All known tool parameter keys collected from tool schemas.
+  # Only these keys are converted from string to atom. Unknown keys
+  # from LLM output are kept as strings to prevent atom table exhaustion.
+  @known_param_keys ~w(
+    command timeout file_path content old_string new_string replace_all
+    pattern path glob offset limit operation args
+    node_type title description confidence parent_id edge_type metadata
+    query_type search_term
+    team_name roles project_path team_id agent_name priority
+    question target context query keeper_id mode topic message_count
+    query_id answer enrichment to new_role require_approval
+    start_line end_line diff task scope severity task_id result name role count
+  )a
+
+  @known_param_key_map Map.new(@known_param_keys, fn atom -> {Atom.to_string(atom), atom} end)
+
+  @doc false
+  def atomize_keys(map) when is_map(map) do
     Map.new(map, fn
       {k, v} when is_binary(k) -> {safe_to_atom(k), atomize_keys(v)}
       {k, v} -> {k, atomize_keys(v)}
     end)
   end
 
-  defp atomize_keys(list) when is_list(list), do: Enum.map(list, &atomize_keys/1)
-  defp atomize_keys(value), do: value
+  def atomize_keys(list) when is_list(list), do: Enum.map(list, &atomize_keys/1)
+  def atomize_keys(value), do: value
 
-  defp safe_to_atom(s) when is_binary(s) and byte_size(s) < 256 do
-    String.to_existing_atom(s)
-  rescue
-    ArgumentError -> String.to_atom(s)
+  # Convert known tool parameter keys to atoms. Unknown keys stay as strings.
+  defp safe_to_atom(s) when is_binary(s) do
+    case Map.fetch(@known_param_key_map, s) do
+      {:ok, atom} -> atom
+      :error -> s
+    end
   end
 
   defp safe_to_atom(s), do: s

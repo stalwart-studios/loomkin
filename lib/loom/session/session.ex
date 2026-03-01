@@ -89,6 +89,19 @@ defmodule Loom.Session do
     end
   end
 
+  @doc "Cancel the currently running agent task."
+  @spec cancel(pid() | String.t()) :: :ok | {:error, term()}
+  def cancel(pid) when is_pid(pid) do
+    GenServer.call(pid, :cancel)
+  end
+
+  def cancel(session_id) when is_binary(session_id) do
+    case Loom.Session.Manager.find_session(session_id) do
+      {:ok, pid} -> cancel(pid)
+      :error -> {:error, :not_found}
+    end
+  end
+
   @doc "Send a permission response to the session."
   def permission_response(session_id, action, tool_name, tool_path) when is_binary(session_id) do
     case Loom.Session.Manager.find_session(session_id) do
@@ -171,6 +184,23 @@ defmodule Loom.Session do
   @impl true
   def handle_call(:get_team_id, _from, state) do
     {:reply, Map.get(state, :team_id), state}
+  end
+
+  @impl true
+  def handle_call(:cancel, _from, state) do
+    case state.architect_task do
+      {%Task{} = task, from} ->
+        Logger.info("[Session] Cancelling agent task for session=#{state.id}")
+        Task.shutdown(task, :brutal_kill)
+        GenServer.reply(from, {:error, :cancelled})
+        broadcast(state.id, {:session_cancelled, state.id})
+        state = %{state | architect_task: nil}
+        state = update_status(state, :idle)
+        {:reply, :ok, state}
+
+      nil ->
+        {:reply, {:error, :no_task_running}, state}
+    end
   end
 
   # --- handle_info ---
