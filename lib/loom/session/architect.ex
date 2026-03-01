@@ -294,7 +294,7 @@ defmodule Loom.Session.Architect do
     end
   end
 
-  defp conversational_fallback(user_text, state, model) do
+  defp conversational_fallback(_user_text, state, model) do
     {provider, model_id} = parse_model(model)
 
     system_prompt = """
@@ -305,10 +305,14 @@ defmodule Loom.Session.Architect do
     describe what you can see and suggest next steps.
     """
 
-    messages = [
-      ReqLLM.Context.system(system_prompt),
-      ReqLLM.Context.user(user_text)
-    ]
+    # Use ContextWindow to build enriched, windowed messages with full history
+    windowed = ContextWindow.build_messages(state.messages, system_prompt,
+      model: model,
+      session_id: state.id,
+      project_path: state.project_path
+    )
+
+    messages = build_req_messages(windowed)
 
     telemetry_meta = %{session_id: state.id, model: model, architect_phase: :conversational}
 
@@ -445,7 +449,7 @@ defmodule Loom.Session.Architect do
     messages =
       messages ++ [ReqLLM.Context.assistant(assistant_content, tool_calls: tool_call_msgs)]
 
-    # Execute each tool call
+    # Execute each tool call (with permission checks)
     {messages, state} =
       Enum.reduce(tool_calls, {messages, state}, fn tool_call, {msgs, st} ->
         tool_name = tool_call[:name]
@@ -453,21 +457,31 @@ defmodule Loom.Session.Architect do
         tool_call_id = tool_call[:id] || "call_#{Ecto.UUID.generate()}"
         context = %{project_path: st.project_path, session_id: st.id}
 
+        # Extract path for permission check
+        tool_path = tool_args["file_path"] || tool_args["path"] || "*"
+
         result_text =
-          case Jido.AI.ToolAdapter.lookup_action(tool_name, st.tools) do
-            {:ok, tool_module} ->
-              tool_meta = %{
-                tool_name: tool_name,
-                session_id: st.id
-              }
+          case check_editor_permission(to_string(tool_name), tool_path, st.id) do
+            :allowed ->
+              case Jido.AI.ToolAdapter.lookup_action(tool_name, st.tools) do
+                {:ok, tool_module} ->
+                  tool_meta = %{
+                    tool_name: tool_name,
+                    session_id: st.id
+                  }
 
-              LoomTelemetry.span_tool_execute(tool_meta, fn ->
-                run_and_format_tool(tool_module, tool_args, context)
-              end)
+                  LoomTelemetry.span_tool_execute(tool_meta, fn ->
+                    run_and_format_tool(tool_module, tool_args, context)
+                  end)
 
-            {:error, :not_found} ->
-              Logger.warning("[Architect] Tool not found: #{tool_name}")
-              "Error: Tool '#{tool_name}' not found"
+                {:error, :not_found} ->
+                  Logger.warning("[Architect] Tool not found: #{tool_name}")
+                  "Error: Tool '#{tool_name}' not found"
+              end
+
+            :denied ->
+              Logger.info("[Architect] Permission denied for #{tool_name} on #{tool_path}")
+              "Error: Permission denied for #{tool_name} on #{tool_path}"
           end
 
         Logger.debug("[Architect] Tool #{tool_name} result: #{String.slice(to_string(result_text), 0, 200)}")
@@ -667,6 +681,24 @@ defmodule Loom.Session.Architect do
       else
         truncated <> "... (truncated)"
       end
+    end
+  end
+
+  defp check_editor_permission(tool_name, tool_path, session_id) do
+    case Loom.Permissions.Manager.check(tool_name, tool_path, session_id) do
+      :allowed ->
+        :allowed
+
+      :ask ->
+        # Broadcast permission request to UI and wait for response
+        broadcast(session_id, {:permission_request, session_id, tool_name, tool_path})
+
+        receive do
+          {:permission_decision, action, ^tool_name, _tool_result} ->
+            if action in ["allow_once", "allow_always"], do: :allowed, else: :denied
+        after
+          60_000 -> :denied
+        end
     end
   end
 

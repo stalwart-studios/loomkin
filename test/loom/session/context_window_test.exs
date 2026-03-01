@@ -230,7 +230,7 @@ defmodule Loom.Session.ContextWindowTest do
 
     test "handles empty messages list" do
       result = ContextWindow.summarize_old_messages([])
-      assert result =~ "Summary of 0 earlier messages:"
+      assert result == ""
     end
   end
 end

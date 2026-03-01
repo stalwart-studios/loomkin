@@ -161,9 +161,22 @@ defmodule LoomWeb.WorkspaceLive do
   end
 
 
-  def handle_event("permission_response", %{"action" => _action}, socket) do
-    # Placeholder for when permissions are wired up
-    {:noreply, socket}
+  def handle_event("permission_response", %{"action" => action, "tool_name" => tool_name, "tool_path" => tool_path}, socket) do
+    Session.permission_response(socket.assigns.session_id, action, tool_name, tool_path)
+    {:noreply, assign(socket, permission_request: nil)}
+  end
+
+  def handle_event("permission_response", %{"action" => action}, socket) do
+    # Fallback when tool_name/tool_path come from the assign
+    case socket.assigns.permission_request do
+      %{tool_name: tool_name, tool_path: tool_path} ->
+        Session.permission_response(socket.assigns.session_id, action, tool_name, tool_path)
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, assign(socket, permission_request: nil)}
   end
 
   def handle_event("switch_sub_tab", %{"tab" => tab}, socket) do
@@ -339,8 +352,9 @@ defmodule LoomWeb.WorkspaceLive do
     {:noreply, push_navigate(socket, to: ~p"/sessions/#{session_id}")}
   end
 
-  def handle_info({:permission_response, _action, _tool_name, _tool_path}, socket) do
-    # Permission responses are handled by the Architect pipeline directly.
+  def handle_info({:permission_response, action, tool_name, tool_path}, socket) do
+    # Forward permission response to the Session GenServer
+    Session.permission_response(socket.assigns.session_id, action, tool_name, tool_path)
     {:noreply, assign(socket, permission_request: nil)}
   end
 

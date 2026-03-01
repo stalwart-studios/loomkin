@@ -176,6 +176,24 @@ defmodule Loom.Session.ContextWindow do
 
     recent_messages = select_recent(messages, available)
 
+    # Summarize evicted messages to preserve context
+    evicted_count = length(messages) - length(recent_messages)
+
+    recent_messages =
+      if evicted_count > 0 do
+        evicted = Enum.take(messages, evicted_count)
+        summary = summarize_old_messages(evicted, Keyword.take(opts, [:model]))
+
+        if summary != "" do
+          summary_msg = %{role: :system, content: summary}
+          [summary_msg | recent_messages]
+        else
+          recent_messages
+        end
+      else
+        recent_messages
+      end
+
     messages_out = [system_msg | recent_messages]
 
     if opts[:team_id] do
@@ -203,20 +221,51 @@ defmodule Loom.Session.ContextWindow do
   @doc """
   Summarize old messages that have been evicted from the context window.
 
-  Currently a placeholder that creates a brief text summary.
-  Will be enhanced to call a weak model for actual summarization.
+  Calls a weak LLM model to produce a concise summary preserving key
+  decisions, file paths, findings, and important context.
+  Falls back to a text snippet on error.
   """
   @spec summarize_old_messages([map()], keyword()) :: String.t()
-  def summarize_old_messages(messages, _opts \\ []) do
+  def summarize_old_messages(messages, opts \\ [])
+
+  def summarize_old_messages([], _opts), do: ""
+
+  def summarize_old_messages(messages, opts) do
     count = length(messages)
 
-    snippet =
+    content =
       messages
       |> Enum.map(&message_content/1)
-      |> Enum.join(" ")
-      |> String.slice(0, 200)
+      |> Enum.join("\n")
+      |> String.slice(0, 4000)
 
-    "Summary of #{count} earlier messages: #{snippet}..."
+    model = Keyword.get(opts, :model) || weak_model()
+
+    prompt = """
+    Summarize the following #{count} conversation messages into a concise summary
+    that preserves key decisions, file paths, findings, and important context.
+    Keep it under 200 words.
+
+    Messages:
+    #{content}
+    """
+
+    case ReqLLM.generate_text(model, [
+           ReqLLM.Context.system("You are a concise summarizer. Preserve technical details."),
+           ReqLLM.Context.user(prompt)
+         ]) do
+      {:ok, response} ->
+        text = ReqLLM.Response.classify(response).text || ""
+        "[Summary of #{count} earlier messages]\n#{text}"
+
+      {:error, _reason} ->
+        snippet = String.slice(content, 0, 200)
+        "Summary of #{count} earlier messages: #{snippet}..."
+    end
+  rescue
+    _ ->
+      snippet = messages |> Enum.map(&message_content/1) |> Enum.join(" ") |> String.slice(0, 200)
+      "Summary of #{length(messages)} earlier messages: #{snippet}..."
   end
 
   @doc "Estimate token count for a string (rough: chars / 4)."
@@ -268,4 +317,16 @@ defmodule Loom.Session.ContextWindow do
 
   defp message_content(%{content: content}) when is_binary(content), do: content
   defp message_content(_), do: ""
+
+  defp weak_model do
+    if Code.ensure_loaded?(Loom.Config) do
+      try do
+        Loom.Config.get(:model, :editor) || "anthropic:claude-haiku-4-5"
+      rescue
+        _ -> "anthropic:claude-haiku-4-5"
+      end
+    else
+      "anthropic:claude-haiku-4-5"
+    end
+  end
 end
