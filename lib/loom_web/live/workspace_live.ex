@@ -6,8 +6,6 @@ defmodule LoomWeb.WorkspaceLive do
 
   require Logger
 
-  @default_model "anthropic:claude-sonnet-4-6"
-
   def mount(params, _session, socket) do
     socket =
       socket
@@ -15,7 +13,7 @@ defmodule LoomWeb.WorkspaceLive do
         messages: [],
         status: :idle,
         active_tab: :files,
-        model: @default_model,
+        model: Loom.Teams.ModelRouter.default_model(),
         input_text: "",
         current_tool: nil,
         current_tool_name: nil,
@@ -46,7 +44,7 @@ defmodule LoomWeb.WorkspaceLive do
     tools = Loom.Tools.Registry.for_lead()
     project_path = File.cwd!()
 
-    {:ok, _pid} =
+    {:ok, pid} =
       Manager.start_session(
         session_id: session_id,
         model: socket.assigns.model,
@@ -54,6 +52,15 @@ defmodule LoomWeb.WorkspaceLive do
         tools: tools,
         auto_approve: false
       )
+
+    # Read the effective model back from the session — for resumed sessions
+    # this will be the DB-persisted model, not the mount default.
+    effective_model =
+      try do
+        GenServer.call(pid, :get_model, 5_000)
+      catch
+        _, _ -> socket.assigns.model
+      end
 
     if connected?(socket) do
       Session.subscribe(session_id)
@@ -80,6 +87,7 @@ defmodule LoomWeb.WorkspaceLive do
     assign(socket,
       session_id: session_id,
       project_path: project_path,
+      model: effective_model,
       messages: messages,
       session_cost: session_metrics.cost_usd,
       session_tokens: session_metrics.prompt_tokens + session_metrics.completion_tokens,

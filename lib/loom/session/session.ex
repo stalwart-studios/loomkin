@@ -101,9 +101,13 @@ defmodule Loom.Session do
 
     case load_or_create_session(session_id, model, project_path, title) do
       {:ok, db_session, messages} ->
+        # Prefer the DB-persisted model for resumed sessions so the user's
+        # last selection survives page refreshes.
+        effective_model = db_session.model || model
+
         state = %__MODULE__{
           id: db_session.id,
-          model: model,
+          model: effective_model,
           project_path: project_path,
           db_session: db_session,
           messages: messages,
@@ -156,6 +160,11 @@ defmodule Loom.Session do
   end
 
   @impl true
+  def handle_call(:get_model, _from, state) do
+    {:reply, state.model, state}
+  end
+
+  @impl true
   def handle_call(:get_team_id, _from, state) do
     {:reply, Map.get(state, :team_id), state}
   end
@@ -166,7 +175,7 @@ defmodule Loom.Session do
   def handle_info({:team_created, team_id}, state) do
     Logger.info("[Session] Backing team created: #{team_id} for session #{state.id}")
     broadcast(state.id, {:team_available, state.id, team_id})
-    {:noreply, %{state | team_id: team_id}}
+    {:noreply, Map.put(state, :team_id, team_id)}
   end
 
   @impl true
