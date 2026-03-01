@@ -143,4 +143,51 @@ defmodule Loom.Teams.NestedTeamsTest do
       assert_receive {:sub_team_completed, ^sub_id}
     end
   end
+
+  describe "agent_loop context injection" do
+    test "includes parent_team_id equal to team_id when team_id is set" do
+      config = %{
+        project_path: "/tmp/test",
+        session_id: "sess-1",
+        agent_name: "lead",
+        team_id: "team-abc",
+        model: "anthropic:claude-sonnet-4-6"
+      }
+
+      context = %{
+        project_path: config.project_path,
+        session_id: config.session_id,
+        agent_name: config.agent_name,
+        team_id: config.team_id,
+        parent_team_id: config.team_id,
+        model: config.model
+      }
+
+      assert context.parent_team_id == "team-abc"
+      assert context.parent_team_id == context.team_id
+      assert context.model == "anthropic:claude-sonnet-4-6"
+    end
+
+    test "parent_team_id is nil when team_id is nil" do
+      config = %{
+        project_path: "/tmp/test",
+        session_id: "sess-2",
+        agent_name: nil,
+        team_id: nil,
+        model: "anthropic:claude-sonnet-4-6"
+      }
+
+      context = %{
+        project_path: config.project_path,
+        session_id: config.session_id,
+        agent_name: config.agent_name,
+        team_id: config.team_id,
+        parent_team_id: config.team_id,
+        model: config.model
+      }
+
+      assert context.parent_team_id == nil
+      assert context.team_id == nil
+    end
+  end
 end

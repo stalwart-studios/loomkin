@@ -28,7 +28,9 @@ defmodule Loom.Teams.Agent do
     context: %{},
     cost_usd: 0.0,
     tokens_used: 0,
-    failure_count: 0
+    failure_count: 0,
+    permission_mode: :auto,
+    pending_permission: nil
   ]
 
   # --- Public API ---
@@ -88,6 +90,8 @@ defmodule Loom.Teams.Agent do
     role = Keyword.fetch!(opts, :role)
     project_path = Keyword.get(opts, :project_path)
 
+    permission_mode = Keyword.get(opts, :permission_mode, :auto)
+
     case Role.get(role) do
       {:ok, role_config} ->
         model = Keyword.get(opts, :model) || ModelRouter.default_model()
@@ -102,7 +106,8 @@ defmodule Loom.Teams.Agent do
           status: :idle,
           model: model,
           project_path: project_path,
-          tools: role_config.tools
+          tools: role_config.tools,
+          permission_mode: permission_mode
         }
 
         Context.register_agent(team_id, name, %{role: role, status: :idle, model: model})
@@ -175,11 +180,10 @@ defmodule Loom.Teams.Agent do
             {:reply, {:error, reason}, state}
         end
 
-      {:pending_permission, _pending_info, messages} ->
-        # For now, agents auto-approve all tools (no interactive permission flow)
-        state = %{state | messages: messages}
-        state = set_status(state, :idle)
-        {:reply, {:error, :permission_not_supported}, state}
+      {:pending_permission, pending_info, messages} ->
+        state = %{state | messages: messages, pending_permission: pending_info}
+        state = set_status(state, :waiting_permission)
+        {:reply, {:ok, :pending_permission}, state}
     end
   end
 
@@ -230,6 +234,38 @@ defmodule Loom.Teams.Agent do
   def handle_cast({:peer_message, from, content}, state) do
     peer_msg = %{role: :user, content: "[Peer #{from}]: #{content}"}
     {:noreply, %{state | messages: state.messages ++ [peer_msg]}}
+  end
+
+  @impl true
+  def handle_cast({:permission_response, action, tool_name, _tool_path}, state) do
+    case state.pending_permission do
+      nil ->
+        {:noreply, state}
+
+      pending_info ->
+        if action == "allow_always" do
+          Loom.Permissions.Manager.grant(to_string(tool_name), "*", state.team_id)
+        end
+
+        # Resume in a task to avoid blocking the GenServer
+        agent_pid = self()
+        messages = state.messages
+
+        Task.Supervisor.start_child(Loom.Teams.TaskSupervisor, fn ->
+          tool_result =
+            if action in ["allow_once", "allow_always"] do
+              pd = pending_info.pending_data
+              AgentLoop.default_run_tool(pd.tool_module, pd.tool_args, pd.context)
+            else
+              "Error: Permission denied for #{tool_name}"
+            end
+
+          result = AgentLoop.resume(tool_result, pending_info, messages)
+          send(agent_pid, {:loop_resumed, result})
+        end)
+
+        {:noreply, %{state | pending_permission: nil}}
+    end
   end
 
   # --- handle_info for PubSub ---
@@ -387,7 +423,24 @@ defmodule Loom.Teams.Agent do
 
   @impl true
   def handle_info({:sub_team_completed, sub_team_id}, state) do
-    msg = %{role: :system, content: "[System] Sub-team #{sub_team_id} has completed and dissolved."}
+    results =
+      try do
+        case Loom.Teams.Tasks.list_all(sub_team_id) do
+          tasks when is_list(tasks) ->
+            tasks
+            |> Enum.filter(&(&1.status == :completed))
+            |> Enum.map(fn t -> "- #{t.title}: #{String.slice(t.result || "", 0, 200)}" end)
+            |> Enum.join("\n")
+
+          _ ->
+            ""
+        end
+      rescue
+        _ -> ""
+      end
+
+    summary = if results != "", do: "\nResults:\n#{results}", else: ""
+    msg = %{role: :system, content: "[System] Sub-team #{sub_team_id} completed and dissolved.#{summary}"}
     {:noreply, %{state | messages: state.messages ++ [msg]}}
   end
 
@@ -514,6 +567,42 @@ defmodule Loom.Teams.Agent do
 
     msg = %{role: :system, content: "[Pair] #{summary}"}
     {:noreply, %{state | messages: state.messages ++ [msg]}}
+  end
+
+  # --- Loop resumed after permission response ---
+
+  @impl true
+  def handle_info({:loop_resumed, {:ok, response_text, messages, metadata}}, state) do
+    task_id = state.task && state.task[:id]
+    if task_id, do: ModelRouter.record_success(state.team_id, state.name, task_id, state.model)
+
+    state = %{state | messages: messages, failure_count: 0}
+    state = track_usage(state, metadata)
+    state = set_status(state, :idle)
+    broadcast_team(state, {:agent_status, state.name, :idle})
+
+    # If there's an active task, complete it with the response
+    if task_id do
+      Loom.Teams.Tasks.complete_task(task_id, response_text)
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:loop_resumed, {:error, reason, messages}}, state) do
+    Logger.error("[Agent:#{state.name}] Resumed loop failed: #{inspect(reason)}")
+    state = %{state | messages: messages}
+    state = set_status(state, :idle)
+    broadcast_team(state, {:agent_status, state.name, :idle})
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:loop_resumed, {:pending_permission, new_pending, messages}}, state) do
+    state = %{state | messages: messages, pending_permission: new_pending}
+    state = set_status(state, :waiting_permission)
+    {:noreply, state}
   end
 
   @impl true
@@ -654,6 +743,7 @@ defmodule Loom.Teams.Agent do
     team_id = state.team_id
     name = state.name
     system_prompt = inject_keeper_index(state.role_config.system_prompt, team_id)
+    permission_callback = build_permission_callback(state)
 
     [
       model: state.model,
@@ -663,6 +753,7 @@ defmodule Loom.Teams.Agent do
       project_path: state.project_path,
       agent_name: state.name,
       team_id: state.team_id,
+      check_permission: permission_callback,
       rate_limiter: fn provider ->
         RateLimiter.acquire(provider, 1000)
       end,
@@ -687,6 +778,31 @@ defmodule Loom.Teams.Agent do
       end
     ]
   end
+
+  defp build_permission_callback(%{permission_mode: :auto}), do: nil
+
+  defp build_permission_callback(%{permission_mode: :session, team_id: team_id, name: name}) do
+    agent_name = name
+
+    fn tool_name, tool_path ->
+      case Loom.Permissions.Manager.check(to_string(tool_name), tool_path, team_id) do
+        :allowed ->
+          :allowed
+
+        :ask ->
+          Phoenix.PubSub.broadcast(
+            Loom.PubSub,
+            "team:#{team_id}",
+            {:permission_request, team_id, to_string(tool_name), tool_path,
+             {:agent, team_id, agent_name}}
+          )
+
+          {:pending, %{tool_name: to_string(tool_name), tool_path: tool_path}}
+      end
+    end
+  end
+
+  defp build_permission_callback(_state), do: nil
 
   defp maybe_prefetch_context(state, task) do
     task_description = task[:description] || task[:text] || to_string(task[:id] || "")

@@ -217,7 +217,7 @@ defmodule Loom.AgentLoop do
     tool_call_id = tool_call[:id] || "call_#{Ecto.UUID.generate()}"
     tool_path = tool_args["file_path"] || tool_args["path"] || "*"
 
-    context = %{project_path: config.project_path, session_id: config.session_id, agent_name: config.agent_name, team_id: config.team_id}
+    context = %{project_path: config.project_path, session_id: config.session_id, agent_name: config.agent_name, team_id: config.team_id, parent_team_id: config.team_id, model: config.model}
 
     emit(config, :tool_executing, %{tool_name: tool_name, tool_target: tool_path})
 

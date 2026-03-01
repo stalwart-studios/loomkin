@@ -14,6 +14,8 @@ defmodule Loom.Session do
     :db_session,
     :status,
     :team_id,
+    :pending_permission,
+    :architect_task,
     messages: [],
     tools: [],
     auto_approve: false,
@@ -87,6 +89,13 @@ defmodule Loom.Session do
     end
   end
 
+  @doc "Send a permission response to the session."
+  def permission_response(session_id, action, tool_name, tool_path) when is_binary(session_id) do
+    case Loom.Session.Manager.find_session(session_id) do
+      {:ok, pid} -> GenServer.cast(pid, {:permission_response, action, tool_name, tool_path})
+      :error -> {:error, :not_found}
+    end
+  end
 
   # --- GenServer Callbacks ---
 
@@ -125,24 +134,17 @@ defmodule Loom.Session do
   end
 
   @impl true
-  def handle_call({:send_message, text}, _from, state) do
-    Logger.info("[Session] send_message session=#{state.id} model=#{state.model} text=#{String.slice(text, 0, 100)}")
+  def handle_call({:send_message, text}, from, state) do
+    Logger.info("[Session] send_message session=#{state.id} model=#{state.model}")
     state = update_status(state, :thinking)
 
-    # Always use architect mode — plan with primary model, execute with
-    # secondary model only when the user has explicitly configured one.
-    case Architect.run(text, state, architect_model: state.model) do
-      {:ok, response_text, state} ->
-        Logger.info("[Session] Architect.run succeeded session=#{state.id}")
-        state = update_status(state, :idle)
-        {:reply, {:ok, response_text}, state}
+    # Run architect in an async Task so the GenServer stays responsive
+    # for permission responses while the architect is running.
+    task = Task.Supervisor.async_nolink(Loom.Teams.TaskSupervisor, fn ->
+      Architect.run(text, state, architect_model: state.model)
+    end)
 
-      {:error, reason, state} ->
-        Logger.error("[Session] Architect.run failed session=#{state.id}: #{inspect(reason)}")
-        broadcast(state.id, {:llm_error, state.id, format_error(reason)})
-        state = update_status(state, :idle)
-        {:reply, {:error, reason}, state}
-    end
+    {:noreply, %{state | architect_task: {task, from}}}
   end
 
   @impl true
@@ -196,9 +198,94 @@ defmodule Loom.Session do
     {:noreply, state}
   end
 
+  # --- Async Architect Task completion ---
+
+  @impl true
+  def handle_info({ref, {:ok, response_text, new_state}}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+
+    case state.architect_task do
+      {%Task{ref: ^ref}, from} ->
+        Logger.info("[Session] Architect.run succeeded session=#{state.id}")
+        state = %{state | messages: new_state.messages, architect_task: nil}
+        state = update_status(state, :idle)
+        GenServer.reply(from, {:ok, response_text})
+        {:noreply, state}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({ref, {:error, reason, new_state}}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+
+    case state.architect_task do
+      {%Task{ref: ^ref}, from} ->
+        Logger.error("[Session] Architect.run failed session=#{state.id}: #{inspect(reason)}")
+        broadcast(state.id, {:llm_error, state.id, format_error(reason)})
+        state = %{state | messages: new_state.messages, architect_task: nil}
+        state = update_status(state, :idle)
+        GenServer.reply(from, {:error, reason})
+        {:noreply, state}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  # Handle architect Task crash
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) when is_reference(ref) do
+    case state.architect_task do
+      {%Task{ref: ^ref}, from} ->
+        Logger.error("[Session] Architect task crashed: #{inspect(reason)}")
+        broadcast(state.id, {:llm_error, state.id, "Architect crashed: #{inspect(reason)}"})
+        state = %{state | architect_task: nil}
+        state = update_status(state, :idle)
+        GenServer.reply(from, {:error, :crashed})
+        {:noreply, state}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  # --- Permission pending from Architect Task ---
+
+  @impl true
+  def handle_info({:permission_pending, architect_pid, tool_name, tool_path}, state) do
+    Logger.debug("[Session] Permission pending: #{tool_name} #{tool_path}")
+    {:noreply, %{state | pending_permission: {architect_pid, %{tool_name: tool_name, tool_path: tool_path}}}}
+  end
+
   @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
+  end
+
+  # --- Permission response from LiveView ---
+
+  @impl true
+  def handle_cast({:permission_response, action, tool_name, tool_path}, state) do
+    case state.pending_permission do
+      nil ->
+        {:noreply, state}
+
+      {architect_pid, _pending_info} ->
+        if action == "allow_always" do
+          Loom.Permissions.Manager.grant(tool_name, tool_path, state.id)
+        end
+
+        tool_result =
+          if action in ["allow_once", "allow_always"],
+            do: nil,
+            else: "Error: Permission denied for #{tool_name}"
+
+        send(architect_pid, {:permission_decision, action, tool_name, tool_result})
+        {:noreply, %{state | pending_permission: nil}}
+    end
   end
 
   # --- Private ----------------------------------------
