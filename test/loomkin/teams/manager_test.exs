@@ -176,25 +176,25 @@ defmodule Loomkin.Teams.ManagerTest do
         %{role: :coder, status: :idle}
       )
 
-      # We need a separate process for the keeper registration since Registry
-      # allows only one key per process
-      keeper_task = Task.async(fn ->
+      # Spawn keeper in a separate process with explicit handshake
+      parent = self()
+
+      keeper_pid = spawn_link(fn ->
         {:ok, _} = Registry.register(
           Loomkin.Teams.AgentRegistry,
           {team_id, "keeper:def-456"},
           %{type: :keeper, topic: "context", tokens: 50, source_agent: "coder-1"}
         )
+        send(parent, :keeper_registered)
         Process.sleep(:infinity)
       end)
 
-      # Give time for registration
-      Process.sleep(10)
+      assert_receive :keeper_registered
+      on_exit(fn -> Process.exit(keeper_pid, :kill) end)
 
       agents = Manager.list_agents(team_id)
       assert length(agents) == 1
       assert [%{name: "coder-1", role: :coder, status: :idle}] = agents
-
-      Task.shutdown(keeper_task, :brutal_kill)
     end
 
     test "returns all agents when no keepers are present" do
@@ -221,25 +221,27 @@ defmodule Loomkin.Teams.ManagerTest do
         %{role: :lead, status: :idle}
       )
 
-      # Register multiple keepers from separate processes
-      keeper_tasks = Enum.map(1..3, fn i ->
-        Task.async(fn ->
+      # Register multiple keepers with explicit handshake
+      parent = self()
+
+      keeper_pids = Enum.map(1..3, fn i ->
+        spawn_link(fn ->
           {:ok, _} = Registry.register(
             Loomkin.Teams.AgentRegistry,
             {team_id, "keeper:keeper-#{i}"},
             %{type: :keeper, topic: "topic-#{i}", tokens: i * 100, source_agent: "lead-1"}
           )
+          send(parent, {:keeper_registered, i})
           Process.sleep(:infinity)
         end)
       end)
 
-      Process.sleep(10)
+      for i <- 1..3, do: assert_receive({:keeper_registered, ^i})
+      on_exit(fn -> Enum.each(keeper_pids, &Process.exit(&1, :kill)) end)
 
       agents = Manager.list_agents(team_id)
       assert length(agents) == 1
       assert [%{name: "lead-1", role: :lead}] = agents
-
-      Enum.each(keeper_tasks, &Task.shutdown(&1, :brutal_kill))
     end
   end
 

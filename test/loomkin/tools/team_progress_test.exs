@@ -12,23 +12,24 @@ defmodule Loomkin.Tools.TeamProgressTest do
     test "returns ok when team has only keepers registered" do
       {:ok, team_id} = Manager.create_team(name: "keeper-only-progress")
 
-      # Register a keeper in a separate process
-      keeper_task = Task.async(fn ->
+      parent = self()
+
+      keeper_pid = spawn_link(fn ->
         {:ok, _} = Registry.register(
           Loomkin.Teams.AgentRegistry,
           {team_id, "keeper:abc-123"},
           %{type: :keeper, topic: "test", tokens: 100, source_agent: "coder"}
         )
+        send(parent, :keeper_registered)
         Process.sleep(:infinity)
       end)
 
-      Process.sleep(10)
+      assert_receive :keeper_registered
+      on_exit(fn -> Process.exit(keeper_pid, :kill) end)
 
       assert {:ok, %{result: result}} = run_progress(team_id)
       assert result =~ "Agents:"
       assert result =~ "(none)"
-
-      Task.shutdown(keeper_task, :brutal_kill)
     end
 
     test "returns ok with zero agents and zero keepers" do
@@ -49,23 +50,24 @@ defmodule Loomkin.Tools.TeamProgressTest do
         %{role: :researcher, status: :working}
       )
 
-      # Register a keeper from a separate process
-      keeper_task = Task.async(fn ->
+      parent = self()
+
+      keeper_pid = spawn_link(fn ->
         {:ok, _} = Registry.register(
           Loomkin.Teams.AgentRegistry,
           {team_id, "keeper:xyz-789"},
           %{type: :keeper, topic: "research notes", tokens: 500, source_agent: "researcher-1"}
         )
+        send(parent, :keeper_registered)
         Process.sleep(:infinity)
       end)
 
-      Process.sleep(10)
+      assert_receive :keeper_registered
+      on_exit(fn -> Process.exit(keeper_pid, :kill) end)
 
       assert {:ok, %{result: result}} = run_progress(team_id)
       assert result =~ "researcher-1 (researcher): working"
       refute result =~ "keeper"
-
-      Task.shutdown(keeper_task, :brutal_kill)
     end
 
     test "output contains all expected sections" do
