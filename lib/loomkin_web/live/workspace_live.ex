@@ -105,6 +105,7 @@ defmodule LoomkinWeb.WorkspaceLive do
     if connected?(socket) do
       Session.subscribe(session_id)
       Phoenix.PubSub.subscribe(Loomkin.PubSub, "telemetry:updates")
+      Phoenix.PubSub.subscribe(Loomkin.PubSub, "auth:status")
       ensure_index_started(project_path)
 
       team_id = socket.assigns[:team_id]
@@ -334,7 +335,9 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   def handle_event("switch_team", %{"team-id" => team_id}, socket) do
     bindings = load_channel_bindings(team_id)
-    {:noreply, assign(socket, active_team_id: team_id, channel_bindings: bindings, reply_target: nil)}
+
+    {:noreply,
+     assign(socket, active_team_id: team_id, channel_bindings: bindings, reply_target: nil)}
   end
 
   def handle_event("edit_explorer_path", _params, socket) do
@@ -416,7 +419,6 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, push_event(socket, "focus-input", %{})}
   end
 
-
   def handle_event("keyboard_shortcut", %{"key" => "command_palette"}, socket) do
     if socket.assigns.command_palette_open do
       {:noreply,
@@ -462,8 +464,7 @@ defmodule LoomkinWeb.WorkspaceLive do
   def handle_event("palette_search", %{"value" => query}, socket) do
     results = build_palette_results(socket, query)
 
-    {:noreply,
-     assign(socket, command_palette_query: query, command_palette_results: results)}
+    {:noreply, assign(socket, command_palette_query: query, command_palette_results: results)}
   end
 
   def handle_event("palette_select", %{"type" => "agent", "value" => agent_name}, socket) do
@@ -1235,6 +1236,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       case direction do
         :inbound ->
           {"[#{channel_label}] Incoming: #{String.slice(text, 0, 150)}", channel_label}
+
         :outbound ->
           {"[#{channel_label}] Sent by #{agent_name || "agent"}", agent_name || channel_label}
       end
@@ -1263,6 +1265,23 @@ defmodule LoomkinWeb.WorkspaceLive do
       end
 
     {:noreply, forward_to_activity(socket, {:collab_event, payload})}
+  end
+
+  # OAuth auth status changed — refresh model selector to reflect new provider availability
+  def handle_info({:auth_connected, _provider}, socket) do
+    {:noreply, send_update_to_model_selector(socket)}
+  end
+
+  def handle_info({:auth_disconnected, _provider}, socket) do
+    {:noreply, send_update_to_model_selector(socket)}
+  end
+
+  def handle_info({:auth_refreshed, _provider}, socket) do
+    {:noreply, socket}
+  end
+
+  def handle_info({:auth_refresh_failed, _provider, _reason}, socket) do
+    {:noreply, send_update_to_model_selector(socket)}
   end
 
   # Catch-all for unhandled PubSub messages (team events, etc.)
@@ -1366,6 +1385,7 @@ defmodule LoomkinWeb.WorkspaceLive do
               {length(@cached_agents)}
             </span>
           </div>
+
           {render_header_channel_badges(assigns)}
           <select
             :if={@child_teams != []}
@@ -1854,7 +1874,11 @@ defmodule LoomkinWeb.WorkspaceLive do
         >
           {team_sub_tab_label(sub)}
         </button>
-        <span :if={@collab_health} class="ml-auto flex items-center gap-1 text-xs" title={"Collaboration health: #{@collab_health}/100"}>
+        <span
+          :if={@collab_health}
+          class="ml-auto flex items-center gap-1 text-xs"
+          title={"Collaboration health: #{@collab_health}/100"}
+        >
           <span class={"inline-block w-2 h-2 rounded-full " <> collab_health_color(@collab_health)} />
           <span class="text-gray-500">{@collab_health}</span>
         </span>
@@ -1927,6 +1951,20 @@ defmodule LoomkinWeb.WorkspaceLive do
     Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:tasks")
     Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:context")
     Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:decisions")
+  end
+
+  defp send_update_to_model_selector(socket) do
+    # Bump auth_version so the component knows to reload providers,
+    # even when the model string hasn't changed
+    auth_version = (socket.assigns[:auth_version] || 0) + 1
+
+    send_update(LoomkinWeb.ModelSelectorComponent,
+      id: "model-selector",
+      model: socket.assigns.model,
+      auth_version: auth_version
+    )
+
+    assign(socket, auth_version: auth_version)
   end
 
   # Recompute cached roster data and ensure child team subscriptions are active.
@@ -2827,19 +2865,39 @@ defmodule LoomkinWeb.WorkspaceLive do
 
     tabs =
       Enum.map([:files, :diff, :terminal, :graph], fn tab ->
-        %{type: :tab, label: Atom.to_string(tab), detail: "Inspector Tab", value: Atom.to_string(tab)}
+        %{
+          type: :tab,
+          label: Atom.to_string(tab),
+          detail: "Inspector Tab",
+          value: Atom.to_string(tab)
+        }
       end)
 
     sub_tabs =
       Enum.map([:activity, :cost, :graph], fn tab ->
-        %{type: :sub_tab, label: Atom.to_string(tab), detail: "Team Sub-tab", value: Atom.to_string(tab)}
+        %{
+          type: :sub_tab,
+          label: Atom.to_string(tab),
+          detail: "Team Sub-tab",
+          value: Atom.to_string(tab)
+        }
       end)
 
     actions = [
-      %{type: :action, label: "Toggle Mode (Solo/Mission Control)", detail: "Action", value: "toggle_mode"},
+      %{
+        type: :action,
+        label: "Toggle Mode (Solo/Mission Control)",
+        detail: "Action",
+        value: "toggle_mode"
+      },
       %{type: :action, label: "Switch Project", detail: "Action", value: "switch_project"},
       %{type: :action, label: "Focus Input", detail: "Action", value: "focus_input"},
-      %{type: :action, label: "Refresh Channel Bindings", detail: "Channels", value: "refresh_channels"}
+      %{
+        type: :action,
+        label: "Refresh Channel Bindings",
+        detail: "Channels",
+        value: "refresh_channels"
+      }
     ]
 
     all = agents ++ tabs ++ sub_tabs ++ actions
@@ -2972,5 +3030,4 @@ defmodule LoomkinWeb.WorkspaceLive do
       _ -> []
     end
   end
-
 end
