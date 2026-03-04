@@ -154,7 +154,7 @@ defmodule LoomkinWeb.ModelSelectorComponent do
         </div>
 
         <%!-- Key warning --%>
-        <.key_warning_banner model={@model} all_providers={@all_providers} />
+        <.key_warning_banner model={@model} all_providers={@all_providers} myself={@myself} />
 
         <%!-- Unconfigured providers --%>
         <div :if={@unconfigured_providers != [] and @search == ""} style="border-top: 1px solid var(--border-subtle);">
