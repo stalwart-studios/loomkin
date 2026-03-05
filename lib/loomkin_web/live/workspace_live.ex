@@ -1940,11 +1940,13 @@ defmodule LoomkinWeb.WorkspaceLive do
       |> Enum.sort_by(fn {_, c} -> c.updated_at end, DateTime)
       |> Enum.map(fn {_name, card} -> card end)
 
-    # Separate concierge to dedicated top slot
+    # Separate first concierge to dedicated top slot; extras go back to workers
     {concierge_cards, worker_cards} =
       Enum.split_with(all_cards, fn c -> c.role in [:concierge] end)
 
     concierge_card = List.first(concierge_cards)
+    extra_concierges = Enum.drop(concierge_cards, 1)
+    worker_cards = extra_concierges ++ worker_cards
 
     focused_card =
       if assigns.focused_agent do

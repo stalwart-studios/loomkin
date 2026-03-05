@@ -53,26 +53,27 @@ defmodule Loomkin.Tools.TeamSpawn do
       [project_path: project_path]
       |> then(fn opts -> if model, do: [{:model, model} | opts], else: opts end)
 
-    results =
+    spawn_results =
       Enum.map(roles, fn role_map ->
         name = Map.get(role_map, :name) || Map.get(role_map, "name")
         role = Map.get(role_map, :role) || Map.get(role_map, "role")
         role_atom = resolve_role(role)
 
         if is_nil(role_atom) do
-          "  - #{name} (#{role}): failed - unknown role. Valid: #{Enum.join(@valid_roles, ", ")}"
+          {:error, name, role,
+           "unknown role. Valid: #{Enum.join(@valid_roles, ", ")}"}
         else
           case Manager.spawn_agent(team_id, name, role_atom, spawn_opts) do
-            {:ok, _pid} -> "  - #{name} (#{role_atom}): spawned"
-            {:error, reason} -> "  - #{name} (#{role_atom}): failed - #{inspect(reason)}"
+            {:ok, _pid} -> {:ok, name, role_atom}
+            {:error, reason} -> {:error, name, role_atom, inspect(reason)}
           end
         end
       end)
 
     # Notify parent team listeners (e.g. WorkspaceLive) so they subscribe to the sub-team
-    has_spawned = Enum.any?(results, &String.contains?(&1, "spawned"))
+    any_spawned = Enum.any?(spawn_results, &match?({:ok, _, _}, &1))
 
-    if parent_team_id && has_spawned do
+    if parent_team_id && any_spawned do
       Phoenix.PubSub.broadcast(
         Loomkin.PubSub,
         "team:#{parent_team_id}",
@@ -80,10 +81,16 @@ defmodule Loomkin.Tools.TeamSpawn do
       )
     end
 
+    lines =
+      Enum.map(spawn_results, fn
+        {:ok, name, role} -> "  - #{name} (#{role}): spawned"
+        {:error, name, role, reason} -> "  - #{name} (#{role}): failed - #{reason}"
+      end)
+
     summary = """
     Team "#{team_name}" created (id: #{team_id})
     Agents:
-    #{Enum.join(results, "\n")}
+    #{Enum.join(lines, "\n")}
     """
 
     {:ok, %{result: String.trim(summary), team_id: team_id}}
