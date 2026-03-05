@@ -342,7 +342,8 @@ defmodule Loomkin.Teams.Manager do
     TableRegistry.delete_table(team_id)
 
     # Broadcast dissolution
-    Phoenix.PubSub.broadcast(Loomkin.PubSub, "team:#{team_id}", {:team_dissolved, team_id})
+    signal = Loomkin.Signals.Team.Dissolved.new!(%{team_id: team_id})
+    Loomkin.Signals.publish(signal)
 
     Logger.info("[Teams] Dissolved team #{team_id}")
     :ok

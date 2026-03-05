@@ -180,26 +180,35 @@ defmodule LoomkinWeb.AgentCardComponent do
       <div class={["mt-3 flex-1 min-h-0", @focused && "overflow-auto"]}>
         <%= case @card.content_type do %>
           <% :thinking -> %>
-            <p
-              class={["text-xs leading-relaxed animate-pulse", !@focused && "line-clamp-4"]}
+            <div
+              class={[
+                "text-xs leading-relaxed animate-pulse agent-card-content",
+                !@focused && "line-clamp-4"
+              ]}
               style="color: var(--text-secondary);"
             >
-              {format_content(@card.latest_content)}
-            </p>
+              {render_card_markdown(format_content(@card.latest_content, @focused))}
+            </div>
           <% :last_thinking -> %>
-            <p
-              class={["text-xs leading-relaxed opacity-50", !@focused && "line-clamp-3"]}
+            <div
+              class={[
+                "text-xs leading-relaxed opacity-50 agent-card-content",
+                !@focused && "line-clamp-3"
+              ]}
               style="color: var(--text-secondary);"
             >
-              {format_content(@card.latest_content)}
-            </p>
+              {render_card_markdown(format_content(@card.latest_content, @focused))}
+            </div>
           <% :message -> %>
-            <p
-              class={["text-xs leading-relaxed", !@focused && "line-clamp-4"]}
+            <div
+              class={[
+                "text-xs leading-relaxed agent-card-content",
+                !@focused && "line-clamp-4"
+              ]}
               style="color: var(--text-secondary);"
             >
-              {format_content(@card.latest_content)}
-            </p>
+              {render_card_markdown(format_content(@card.latest_content, @focused))}
+            </div>
           <% _ -> %>
             <p class="text-xs text-muted italic">idle</p>
         <% end %>
@@ -258,10 +267,27 @@ defmodule LoomkinWeb.AgentCardComponent do
 
   defp format_role(_), do: "-"
 
-  defp format_content(nil), do: ""
+  defp format_content(nil, _focused), do: ""
 
-  defp format_content(content) when is_binary(content),
-    do: content |> String.trim() |> String.slice(0, 500)
+  defp format_content(content, focused) when is_binary(content) do
+    trimmed = String.trim(content)
+    if focused, do: trimmed, else: String.slice(trimmed, 0, 500)
+  end
 
-  defp format_content(_), do: ""
+  defp format_content(_, _focused), do: ""
+
+  defp render_card_markdown(""), do: ""
+
+  defp render_card_markdown(content) when is_binary(content) do
+    doc =
+      MDEx.new(render: [unsafe_: true])
+      |> MDEx.Document.put_markdown(content)
+
+    case MDEx.to_html(doc) do
+      {:ok, html} -> Phoenix.HTML.raw(html)
+      _ -> Phoenix.HTML.raw("<p>#{Phoenix.HTML.html_escape(content)}</p>")
+    end
+  end
+
+  defp render_card_markdown(_), do: ""
 end

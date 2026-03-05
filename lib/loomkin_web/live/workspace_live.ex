@@ -68,7 +68,8 @@ defmodule LoomkinWeb.WorkspaceLive do
         # Cached roster data (recomputed on roster_version changes, not per render)
         cached_agents: [],
         cached_tasks: [],
-        cached_budget: %{spent: 0.0, limit: 5.0}
+        cached_budget: %{spent: 0.0, limit: 5.0},
+        last_user_message: nil
       )
 
     project_path = File.cwd!()
@@ -162,8 +163,10 @@ defmodule LoomkinWeb.WorkspaceLive do
     socket =
       if connected?(socket) do
         Session.subscribe(session_id)
-        Phoenix.PubSub.subscribe(Loomkin.PubSub, "telemetry:updates")
-        Phoenix.PubSub.subscribe(Loomkin.PubSub, "auth:status")
+
+        # Subscribe to session and system signals via the Bus
+        Loomkin.Signals.subscribe("session.**")
+        Loomkin.Signals.subscribe("system.**")
         ensure_index_started(project_path)
 
         team_id = socket.assigns[:team_id]
@@ -228,7 +231,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       messages: messages,
       session_cost: session_metrics.cost_usd,
       session_tokens: session_metrics.prompt_tokens + session_metrics.completion_tokens,
-      page_title: "Loomkin - #{short_id(session_id)}",
+      page_title: session_page_title(session_id),
       child_teams: child_teams,
       active_team_id: active_team_id,
       switch_project_modal: nil,
@@ -266,7 +269,12 @@ defmodule LoomkinWeb.WorkspaceLive do
 
             {:noreply,
              socket
-             |> assign(input_text: "", reply_target: nil, activity_events: events)
+             |> assign(
+               input_text: "",
+               reply_target: nil,
+               activity_events: events,
+               last_user_message: %{text: trimmed, to: agent_name}
+             )
              |> push_event("clear-input", %{})}
 
           :error ->
@@ -300,7 +308,8 @@ defmodule LoomkinWeb.WorkspaceLive do
              |> assign(
                input_text: "",
                reply_target: nil,
-               activity_events: events
+               activity_events: events,
+               last_user_message: %{text: trimmed, to: agent_name}
              )
              |> push_event("clear-input", %{})}
 
@@ -348,13 +357,32 @@ defmodule LoomkinWeb.WorkspaceLive do
             socket
           end
 
+        updated_messages = Enum.take(socket.assigns.messages ++ [user_msg], -@max_messages)
+
+        # Auto-title page from first user message
+        socket =
+          if socket.assigns.messages == [] do
+            title =
+              trimmed
+              |> String.split(~r/[\n\r]/, parts: 2)
+              |> List.first("")
+              |> String.trim()
+              |> String.slice(0, 60)
+
+            title = if title == "", do: "New session", else: title
+            assign(socket, page_title: title)
+          else
+            socket
+          end
+
         {:noreply,
          socket
          |> assign(
            input_text: "",
            async_task: task,
            status: :thinking,
-           messages: Enum.take(socket.assigns.messages ++ [user_msg], -@max_messages)
+           messages: updated_messages,
+           last_user_message: %{text: trimmed, to: "Team"}
          )
          |> push_event("clear-input", %{})}
     end
@@ -751,6 +779,174 @@ defmodule LoomkinWeb.WorkspaceLive do
       end)
 
     {:noreply, assign(socket, reply_target: %{agent: agent_name, team_id: team_id})}
+  end
+
+  # --- Signal Bus dispatch ---
+  # Converts Jido.Signal structs from the Bus into the tuple format
+  # that existing handle_info clauses expect. As more modules migrate to
+  # signals, eventually the tuple clauses will be removed.
+
+  def handle_info({:signal, %Jido.Signal{} = sig}, socket) do
+    if signal_for_workspace?(sig, socket) do
+      handle_info(sig, socket)
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.status"} = sig, socket) do
+    %{agent_name: agent_name, status: status} = sig.data
+    handle_info({:agent_status, agent_name, status}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.role.changed"} = sig, socket) do
+    %{agent_name: name, old_role: old_role, new_role: new_role} = sig.data
+    handle_info({:role_changed, name, old_role, new_role}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.escalation"} = sig, socket) do
+    %{agent_name: name, from_model: from, to_model: to} = sig.data
+    handle_info({:agent_escalation, name, from, to}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.stream.start"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_stream_start, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.stream.delta"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_stream_delta, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.stream.end"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_stream_end, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.tool.executing"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:tool_executing, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.tool.complete"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:tool_complete, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.usage"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:usage, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.error"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_error, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.offloaded"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:context_offloaded, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.permission.request"} = sig, socket) do
+    %{team_id: tid, tool_name: tn, tool_path: tp, source: source} = sig.data
+    handle_info({:permission_request, tid, tn, tp, source}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.dissolved"} = sig, socket) do
+    %{team_id: tid} = sig.data
+    handle_info({:team_dissolved, tid}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.child.created"} = sig, socket) do
+    %{team_id: tid} = sig.data
+    handle_info({:child_team_created, tid}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.ask_user.question"} = sig, socket) do
+    handle_info({:ask_user_question, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.ask_user.answered"} = sig, socket) do
+    %{question_id: qid, answer: answer} = sig.data
+    handle_info({:ask_user_answered, qid, answer}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.update"} = sig, socket) do
+    %{from: from} = sig.data
+    payload = sig.data
+    handle_info({:context_update, from, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.keeper.created"} = sig, socket) do
+    handle_info({:keeper_created, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "decision.node.added"} = sig, socket) do
+    handle_info({:node_added, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "decision.pivot.created"} = sig, socket) do
+    handle_info({:pivot_created, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "decision.logged"} = sig, socket) do
+    %{node_id: nid, agent_name: name} = sig.data
+    handle_info({:decision_logged, nid, name}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "channel.message"} = sig, socket) do
+    handle_info({:channel_message, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "collaboration.vote.response"} = sig, socket) do
+    %{vote_id: vid, response: resp} = sig.data
+    handle_info({:vote_response, vid, resp}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "system.auth." <> _} = sig, socket) do
+    tuple =
+      case sig.type do
+        "system.auth.connected" -> {:auth_connected, sig.data.provider}
+        "system.auth.disconnected" -> {:auth_disconnected, sig.data.provider}
+        "system.auth.refreshed" -> {:auth_refreshed, sig.data.provider}
+        "system.auth.refresh_failed" -> {:auth_refresh_failed, sig.data.provider, nil}
+        _ -> nil
+      end
+
+    if tuple, do: handle_info(tuple, socket), else: {:noreply, socket}
+  end
+
+  def handle_info(%Jido.Signal{type: "system.metrics.updated"}, socket) do
+    handle_info(:metrics_updated, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "session.message.new"} = sig, socket) do
+    %{session_id: sid} = sig.data
+
+    if sid == socket.assigns.session_id do
+      msg = Map.get(sig.data, :message, sig.data)
+      handle_info({:new_message, sid, msg}, socket)
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info(%Jido.Signal{type: "session.status.changed"} = sig, socket) do
+    %{session_id: sid, status: status} = sig.data
+
+    if sid == socket.assigns.session_id do
+      handle_info({:session_status, sid, status}, socket)
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Catch-all for unhandled signal types — log and ignore
+  def handle_info(%Jido.Signal{type: type}, socket) do
+    Logger.debug("[WorkspaceLive] Unhandled signal type: #{type}")
+    {:noreply, socket}
   end
 
   # --- PubSub Info ---
@@ -2048,6 +2244,9 @@ defmodule LoomkinWeb.WorkspaceLive do
       <%!-- Budget bar --%>
       {render_budget_bar(assigns)}
 
+      <%!-- Last user message echo --%>
+      {render_last_message_strip(assigns)}
+
       <%!-- Sticky composer --%>
       {render_input_bar(assigns)}
     </div>
@@ -2133,6 +2332,38 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp format_decimal_cost(n) when is_float(n), do: :erlang.float_to_binary(n, decimals: 2)
   defp format_decimal_cost(n) when is_integer(n), do: "#{n}.00"
   defp format_decimal_cost(_), do: "0.00"
+
+  defp render_last_message_strip(%{last_user_message: nil} = assigns) do
+    ~H""
+  end
+
+  defp render_last_message_strip(assigns) do
+    ~H"""
+    <div
+      class="flex-shrink-0 px-4 py-1.5 flex items-center gap-2 overflow-hidden"
+      style="border-top: 1px solid var(--border-subtle); background: var(--surface-1);"
+    >
+      <span class="text-[10px] font-semibold text-muted uppercase tracking-widest flex-shrink-0">
+        You
+      </span>
+      <span class="text-[10px] flex-shrink-0" style="color: var(--text-muted);">
+        &rarr;
+      </span>
+      <span
+        class="text-[10px] font-medium flex-shrink-0"
+        style="color: var(--brand);"
+      >
+        {@last_user_message.to}
+      </span>
+      <span
+        class="text-[11px] truncate flex-1 min-w-0"
+        style="color: var(--text-secondary);"
+      >
+        {@last_user_message.text}
+      </span>
+    </div>
+    """
+  end
 
   # --- Shared input bar (used by both modes) ---
 
@@ -2562,6 +2793,19 @@ defmodule LoomkinWeb.WorkspaceLive do
   # Subscribe to a team's PubSub topics, but only once per team.
   # Also synthesizes "joined" events for agents that already exist (race condition fix).
   # Returns the updated socket with the team tracked in :subscribed_teams.
+  # Check if a signal belongs to this workspace's team(s) or session.
+  # Session signals are filtered separately in their specific handlers.
+  # Signals without team_id are accepted (system-level signals).
+  defp signal_for_workspace?(sig, socket) do
+    signal_team_id =
+      get_in(sig.data, [:team_id]) ||
+        get_in(sig, [Access.key(:extensions, %{}), "loomkin", "team_id"])
+
+    subscribed_teams = socket.assigns[:subscribed_teams] || MapSet.new()
+
+    signal_team_id == nil or MapSet.member?(subscribed_teams, signal_team_id)
+  end
+
   defp subscribe_to_team(socket, team_id) do
     subscribed = socket.assigns[:subscribed_teams] || MapSet.new()
 
@@ -2569,13 +2813,22 @@ defmodule LoomkinWeb.WorkspaceLive do
       socket
     else
       Logger.info("[WorkspaceLive] subscribe_to_team(#{team_id}) self=#{inspect(self())}")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:tasks")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:context")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:decisions")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "decision_graph:#{team_id}")
+
+      # Subscribe to Jido Signal Bus for typed signals (new path)
+      Loomkin.Signals.subscribe("agent.**")
+      Loomkin.Signals.subscribe("team.**")
+      Loomkin.Signals.subscribe("context.**")
+      Loomkin.Signals.subscribe("decision.**")
+      Loomkin.Signals.subscribe("channel.**")
+      Loomkin.Signals.subscribe("collaboration.**")
+      Loomkin.Signals.subscribe("system.**")
 
       socket = assign(socket, subscribed_teams: MapSet.put(subscribed, team_id))
+
+      # Replay recent decision signals to catch up on events missed before subscription.
+      # The bus delivers replayed signals as regular messages, triggering refresh_decision_graphs.
+      five_min_ago = System.os_time(:microsecond) - 5 * 60 * 1_000_000
+      Loomkin.Signals.replay("decision.**", five_min_ago)
 
       # Synthesize "joined" events for agents that were spawned before we subscribed
       existing_agents =
@@ -3607,8 +3860,18 @@ defmodule LoomkinWeb.WorkspaceLive do
     end
   end
 
-  defp short_id(id) do
-    String.slice(id, 0, 8)
+  defp session_page_title(session_id) do
+    case Loomkin.Session.Persistence.get_session(session_id) do
+      %{title: title} when is_binary(title) and title != "" ->
+        if Regex.match?(~r/^Session \d{4}-\d{2}-\d{2}/, title) do
+          "Loomkin - #{String.slice(session_id, 0, 8)}"
+        else
+          String.slice(title, 0, 60)
+        end
+
+      _ ->
+        "Loomkin - #{String.slice(session_id, 0, 8)}"
+    end
   end
 
   defp format_cost(cost) when is_number(cost) and cost > 0,
@@ -3689,16 +3952,25 @@ defmodule LoomkinWeb.WorkspaceLive do
         "Options: #{options_text}. " <>
         "Reply with ONLY your preferred option (exact text)."
 
-    # Subscribe to the team topic to collect agent votes
+    # Subscribe to vote signals
     vote_topic = "ask_user:vote:#{question_id}"
-    Phoenix.PubSub.subscribe(Loomkin.PubSub, vote_topic)
+    Loomkin.Signals.subscribe("collaboration.vote.*")
 
-    Phoenix.PubSub.broadcast(
-      Loomkin.PubSub,
-      "team:#{team_id}",
-      {:peer_message, "system", collective_prompt,
-       %{reply_topic: vote_topic, question_id: question_id, options: options}}
-    )
+    signal =
+      Loomkin.Signals.Collaboration.PeerMessage.new!(
+        %{from: "system", team_id: team_id},
+        subject: "vote:#{question_id}"
+      )
+
+    Loomkin.Signals.publish(%{
+      signal
+      | data:
+          Map.merge(signal.data, %{
+            message:
+              {:peer_message, "system", collective_prompt,
+               %{reply_topic: vote_topic, question_id: question_id, options: options}}
+          })
+    })
 
     # Collect votes in a background task and deliver the result
     Task.Supervisor.start_child(Loomkin.Teams.TaskSupervisor, fn ->
@@ -3715,7 +3987,6 @@ defmodule LoomkinWeb.WorkspaceLive do
         end
 
       send_ask_user_answer(question_id, "Collective: #{winner}")
-      Phoenix.PubSub.unsubscribe(Loomkin.PubSub, vote_topic)
     end)
   end
 
