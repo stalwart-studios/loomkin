@@ -145,49 +145,30 @@ defmodule Loomkin.Teams.NestedTeamsTest do
   end
 
   describe "agent_loop context injection" do
-    test "includes parent_team_id equal to team_id when team_id is set" do
-      config = %{
-        project_path: "/tmp/test",
-        session_id: "sess-1",
-        agent_name: "lead",
-        team_id: "team-abc",
-        model: "zai:glm-5"
-      }
+    test "parent_team_id resolves to actual parent for sub-teams" do
+      {:ok, parent_id} = Manager.create_team(name: "parent", project_path: "/tmp/test")
+      {:ok, child_id} = Manager.create_sub_team(parent_id, "lead", name: "child", project_path: "/tmp/test")
 
-      context = %{
-        project_path: config.project_path,
-        session_id: config.session_id,
-        agent_name: config.agent_name,
-        team_id: config.team_id,
-        parent_team_id: config.team_id,
-        model: config.model
-      }
+      parent_team_id =
+        case Manager.get_parent_team(child_id) do
+          {:ok, pid} -> pid
+          :none -> nil
+        end
 
-      assert context.parent_team_id == "team-abc"
-      assert context.parent_team_id == context.team_id
-      assert context.model == "zai:glm-5"
+      assert parent_team_id == parent_id
+      refute parent_team_id == child_id
     end
 
-    test "parent_team_id is nil when team_id is nil" do
-      config = %{
-        project_path: "/tmp/test",
-        session_id: "sess-2",
-        agent_name: nil,
-        team_id: nil,
-        model: "zai:glm-5"
-      }
+    test "parent_team_id is nil for top-level teams" do
+      {:ok, team_id} = Manager.create_team(name: "top-level", project_path: "/tmp/test")
 
-      context = %{
-        project_path: config.project_path,
-        session_id: config.session_id,
-        agent_name: config.agent_name,
-        team_id: config.team_id,
-        parent_team_id: config.team_id,
-        model: config.model
-      }
+      parent_team_id =
+        case Manager.get_parent_team(team_id) do
+          {:ok, pid} -> pid
+          :none -> nil
+        end
 
-      assert context.parent_team_id == nil
-      assert context.team_id == nil
+      assert parent_team_id == nil
     end
   end
 end
