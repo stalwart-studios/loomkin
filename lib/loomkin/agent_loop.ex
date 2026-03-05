@@ -301,12 +301,18 @@ defmodule Loomkin.AgentLoop do
     # Dynamically resolve project_path at each tool execution
     effective_path = current_project_path(config)
 
+    parent_team_id =
+      case Loomkin.Teams.Manager.get_parent_team(config.team_id) do
+        {:ok, parent_id} -> parent_id
+        :none -> nil
+      end
+
     context = %{
       project_path: effective_path,
       session_id: config.session_id,
       agent_name: config.agent_name,
       team_id: config.team_id,
-      parent_team_id: config.team_id,
+      parent_team_id: parent_team_id,
       model: config.model
     }
 
