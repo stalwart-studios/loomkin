@@ -137,11 +137,11 @@ defmodule LoomkinWeb.DecisionGraphComponent do
   end
 
   def handle_event("filter_agent", %{"agent" => ""}, socket) do
-    {:noreply, assign(socket, agent_filter: nil)}
+    {:noreply, recompute_visible(socket, nil)}
   end
 
   def handle_event("filter_agent", %{"agent" => agent_name}, socket) do
-    {:noreply, assign(socket, agent_filter: agent_name)}
+    {:noreply, recompute_visible(socket, agent_name)}
   end
 
   @impl true
@@ -667,6 +667,23 @@ defmodule LoomkinWeb.DecisionGraphComponent do
       end)
 
     MapSet.new(supersedes_pairs ++ title_conflicts)
+  end
+
+  # Recalculate visible nodes/edges after a filter change (without reloading from DB)
+  defp recompute_visible(socket, agent_filter) do
+    {visible_nodes, visible_edges} =
+      apply_agent_filter(socket.assigns.nodes, socket.assigns.edges, agent_filter)
+
+    positioned = layout_nodes(visible_nodes)
+    {svg_w, svg_h} = compute_svg_dimensions(positioned)
+
+    assign(socket,
+      agent_filter: agent_filter,
+      positioned: positioned,
+      visible_edges: visible_edges,
+      svg_width: max(svg_w, 400),
+      svg_height: max(svg_h, 200)
+    )
   end
 
   defp apply_agent_filter(nodes, edges, nil), do: {nodes, edges}
