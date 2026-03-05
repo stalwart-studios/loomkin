@@ -34,6 +34,21 @@ defmodule LoomkinWeb.AgentRosterComponent do
     {:noreply, socket}
   end
 
+  def handle_event("pause_agent", %{"agent" => agent_name}, socket) do
+    send(self(), {:pause_agent, agent_name})
+    {:noreply, socket}
+  end
+
+  def handle_event("resume_agent", %{"agent" => agent_name}, socket) do
+    send(self(), {:resume_agent, agent_name})
+    {:noreply, socket}
+  end
+
+  def handle_event("steer_agent", %{"agent" => agent_name}, socket) do
+    send(self(), {:steer_agent, agent_name})
+    {:noreply, socket}
+  end
+
   def handle_event("toggle_tasks", _params, socket) do
     {:noreply, assign(socket, tasks_collapsed: !socket.assigns.tasks_collapsed)}
   end
@@ -118,6 +133,56 @@ defmodule LoomkinWeb.AgentRosterComponent do
                     d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z"
                     clip-rule="evenodd"
                   />
+                </svg>
+              </button>
+              <%!-- Pause button (visible when agent is working) --%>
+              <button
+                :if={agent.status == :working}
+                phx-click="pause_agent"
+                phx-value-agent={agent.name}
+                phx-target={@myself}
+                title={"Pause #{agent.name}"}
+                class="text-muted hover:text-amber-400 opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-surface-3 flex-shrink-0"
+                style="transition: opacity var(--transition-base), color var(--transition-base), background var(--transition-base);"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path
+                    fill-rule="evenodd"
+                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
+              <%!-- Resume button (visible when agent is paused) --%>
+              <button
+                :if={agent.status == :paused}
+                phx-click="resume_agent"
+                phx-value-agent={agent.name}
+                phx-target={@myself}
+                title={"Resume #{agent.name}"}
+                class="text-muted hover:text-green-400 p-1 rounded-md hover:bg-surface-3 flex-shrink-0"
+                style="transition: color var(--transition-base), background var(--transition-base);"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path
+                    fill-rule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
+              <%!-- Steer button (visible when agent is paused) --%>
+              <button
+                :if={agent.status == :paused}
+                phx-click="steer_agent"
+                phx-value-agent={agent.name}
+                phx-target={@myself}
+                title={"Steer #{agent.name}"}
+                class="text-muted hover:text-brand p-1 rounded-md hover:bg-surface-3 flex-shrink-0"
+                style="transition: color var(--transition-base), background var(--transition-base);"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
                 </svg>
               </button>
             </div>
@@ -260,6 +325,7 @@ defmodule LoomkinWeb.AgentRosterComponent do
   defp status_dot_class(:working), do: "bg-green-400 agent-dot-working"
   defp status_dot_class(:idle), do: "bg-zinc-500"
   defp status_dot_class(:blocked), do: "bg-amber-400 agent-dot-thinking"
+  defp status_dot_class(:paused), do: "bg-blue-400"
   defp status_dot_class(:error), do: "bg-red-400 agent-dot-error"
   defp status_dot_class(:waiting_permission), do: "bg-amber-400 agent-dot-thinking"
   defp status_dot_class(_), do: "bg-zinc-500"
@@ -267,6 +333,7 @@ defmodule LoomkinWeb.AgentRosterComponent do
   defp status_text_class(:working), do: "text-green-400"
   defp status_text_class(:idle), do: "text-muted"
   defp status_text_class(:blocked), do: "text-amber-400"
+  defp status_text_class(:paused), do: "text-blue-400"
   defp status_text_class(:error), do: "text-red-400"
   defp status_text_class(:waiting_permission), do: "text-amber-400"
   defp status_text_class(_), do: "text-muted"
@@ -274,6 +341,7 @@ defmodule LoomkinWeb.AgentRosterComponent do
   defp status_label(:working), do: "working"
   defp status_label(:idle), do: "idle"
   defp status_label(:blocked), do: "blocked"
+  defp status_label(:paused), do: "paused"
   defp status_label(:error), do: "error"
   defp status_label(:waiting_permission), do: "awaiting"
   defp status_label(_), do: "idle"

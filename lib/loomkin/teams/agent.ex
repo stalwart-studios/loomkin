@@ -42,7 +42,9 @@ defmodule Loomkin.Teams.Agent do
     pending_permission: nil,
     loop_task: nil,
     pending_updates: [],
-    priority_queue: []
+    priority_queue: [],
+    pause_requested: false,
+    paused_state: nil
   ]
 
   # --- Public API ---
@@ -85,6 +87,21 @@ defmodule Loomkin.Teams.Agent do
 
   @doc "Cancel an in-progress agent loop."
   def cancel(pid), do: GenServer.call(pid, :cancel, 15_000)
+
+  @doc "Request the agent to pause at the next checkpoint."
+  def request_pause(pid) do
+    GenServer.cast(pid, :request_pause)
+  end
+
+  @doc "Resume a paused agent, optionally injecting guidance text."
+  def resume(pid, opts \\ []) do
+    GenServer.call(pid, {:resume, opts}, 15_000)
+  end
+
+  @doc "Inject steering guidance and resume a paused agent."
+  def steer(pid, guidance) when is_binary(guidance) do
+    GenServer.call(pid, {:resume, redirect: guidance}, 15_000)
+  end
 
   @doc "Send a permission response to this agent."
   def permission_response(pid, action, tool_name, tool_path) do
@@ -272,12 +289,87 @@ defmodule Loomkin.Teams.Agent do
         broadcast_team(state, {:agent_status, state.name, :idle})
         {:reply, :ok, state}
 
+      nil when state.status == :paused ->
+        # Agent is paused — cancel clears paused state
+        Logger.info("[Agent:#{state.name}] Cancelling paused agent")
+
+        state = %{
+          state
+          | paused_state: nil,
+            pause_requested: false,
+            pending_updates: [],
+            priority_queue: []
+        }
+
+        state = set_status(state, :idle)
+        broadcast_team(state, {:agent_status, state.name, :idle})
+        {:reply, :ok, state}
+
       nil ->
         {:reply, {:error, :no_task_running}, state}
     end
   end
 
+  @impl true
+  def handle_call({:checkpoint, _checkpoint}, _from, %{pause_requested: true} = state) do
+    {:reply, {:pause, :user_requested}, state}
+  end
+
+  def handle_call({:checkpoint, _checkpoint}, _from, state) do
+    {:reply, :continue, state}
+  end
+
+  @impl true
+  def handle_call({:resume, _opts}, _from, %{status: status} = state)
+      when status != :paused do
+    {:reply, {:error, :not_paused}, state}
+  end
+
+  def handle_call({:resume, opts}, from, %{status: :paused} = state) do
+    Logger.info("[Agent:#{state.name}] Resuming from pause")
+
+    paused = state.paused_state
+    messages = paused.messages
+
+    # If user provided steering guidance, inject it as a user message
+    messages =
+      case Keyword.get(opts, :redirect) do
+        nil ->
+          messages
+
+        guidance when is_binary(guidance) ->
+          Logger.info("[Agent:#{state.name}] Steering with: #{String.slice(guidance, 0, 100)}")
+          messages ++ [%{role: :user, content: "[User Guidance]: #{guidance}"}]
+      end
+
+    state = %{
+      state
+      | pause_requested: false,
+        paused_state: nil,
+        messages: messages
+    }
+
+    state = set_status(state, :working)
+    broadcast_team(state, {:agent_status, state.name, :working})
+
+    loop_opts = build_loop_opts(state)
+    snapshot = build_snapshot(state)
+
+    task =
+      Task.Supervisor.async_nolink(Loomkin.Teams.TaskSupervisor, fn ->
+        run_loop_with_escalation(messages, loop_opts, snapshot)
+      end)
+
+    {:reply, :ok, %{state | loop_task: {task, from}}}
+  end
+
   # --- handle_cast ---
+
+  @impl true
+  def handle_cast(:request_pause, state) do
+    Logger.info("[Agent:#{state.name}] Pause requested")
+    {:noreply, %{state | pause_requested: true}}
+  end
 
   @impl true
   def handle_cast({:assign_task, task}, state) do
@@ -436,6 +528,41 @@ defmodule Loomkin.Teams.Agent do
         state = set_status(state, :waiting_permission)
 
         if from, do: GenServer.reply(from, {:ok, :pending_permission})
+
+        {:noreply, drain_queues(state)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({ref, {:loop_paused, reason, msgs, iteration}}, state)
+      when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+
+    case state.loop_task do
+      {%Task{ref: ^ref}, from} ->
+        Logger.info("[Agent:#{state.name}] Loop paused: #{inspect(reason)}")
+
+        paused_state = %{
+          messages: msgs,
+          iteration: iteration,
+          reason: reason
+        }
+
+        state = %{
+          state
+          | messages: msgs,
+            loop_task: nil,
+            pause_requested: false,
+            paused_state: paused_state
+        }
+
+        state = set_status(state, :paused)
+        broadcast_team(state, {:agent_status, state.name, :paused})
+
+        if from, do: GenServer.reply(from, {:ok, :paused})
 
         {:noreply, drain_queues(state)}
 
@@ -834,6 +961,22 @@ defmodule Loomkin.Teams.Agent do
   end
 
   @impl true
+  def handle_info({:loop_resumed, {:paused, reason, messages, iteration}}, state) do
+    paused_state = %{messages: messages, iteration: iteration, reason: reason}
+
+    state = %{
+      state
+      | messages: messages,
+        pause_requested: false,
+        paused_state: paused_state
+    }
+
+    state = set_status(state, :paused)
+    broadcast_team(state, {:agent_status, state.name, :paused})
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info({:request_review, from, %{file: file, changes: changes} = payload}, state) do
     question_text =
       case payload[:question] do
@@ -1072,6 +1215,9 @@ defmodule Loomkin.Teams.Agent do
 
       {:pending_permission, info, msgs} ->
         {:loop_pending, info, msgs}
+
+      {:paused, reason, msgs, iteration} ->
+        {:loop_paused, reason, msgs, iteration}
     end
   end
 
@@ -1137,6 +1283,9 @@ defmodule Loomkin.Teams.Agent do
 
           {:pending_permission, _info, _msgs} ->
             {:loop_error, reason, messages}
+
+          {:paused, pause_reason, msgs, iteration} ->
+            {:loop_paused, pause_reason, msgs, iteration}
         end
 
       :max_reached ->
@@ -1217,6 +1366,7 @@ defmodule Loomkin.Teams.Agent do
     name = state.name
     system_prompt = inject_keeper_index(state.role_config.system_prompt, team_id)
     permission_callback = build_permission_callback(state)
+    checkpoint_callback = build_checkpoint_callback()
 
     # A resolver fn allows AgentLoop to read the latest project_path from
     # team ETS at every tool call, even when the Task captured stale opts.
@@ -1231,6 +1381,7 @@ defmodule Loomkin.Teams.Agent do
       agent_name: state.name,
       team_id: state.team_id,
       check_permission: permission_callback,
+      checkpoint: checkpoint_callback,
       rate_limiter: fn provider ->
         RateLimiter.acquire(provider, 1000)
       end,
@@ -1314,6 +1465,16 @@ defmodule Loomkin.Teams.Agent do
   end
 
   defp build_permission_callback(_state), do: nil
+
+  defp build_checkpoint_callback do
+    # Capture self() at build time — this is the Agent GenServer pid.
+    # The callback runs inside the async Task and calls back to the GenServer.
+    agent_pid = self()
+
+    fn checkpoint ->
+      GenServer.call(agent_pid, {:checkpoint, checkpoint}, 30_000)
+    end
+  end
 
   defp maybe_prefetch_context(state, task) do
     task_description = task[:description] || task[:text] || to_string(task[:id] || "")

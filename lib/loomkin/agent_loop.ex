@@ -7,6 +7,7 @@ defmodule Loomkin.AgentLoop do
   GenServer or PubSub topology.
   """
 
+  alias Loomkin.AgentLoop.Checkpoint
   alias Loomkin.Session.ContextWindow
   alias Loomkin.Teams.ContextOffload
   alias Loomkin.Telemetry, as: LoomkinTelemetry
@@ -33,8 +34,13 @@ defmodule Loomkin.AgentLoop do
        When not provided, tools are executed via `Jido.Exec.run/4`.
     * `:check_permission` - `fn tool_name, tool_path -> :allowed | {:pending, pending_data}`.
        When not provided, all tools are allowed.
+    * `:checkpoint` - `fn(%Checkpoint{}) -> :continue | {:pause, reason}`.
+       Called after LLM response (before tool execution) and after each tool execution.
+       When not provided or nil, execution proceeds without pausing.
 
-  Returns `{:ok, response_text, messages, metadata}` or `{:error, reason, messages}`.
+  Returns `{:ok, response_text, messages, metadata}`, `{:error, reason, messages}`,
+  `{:pending_permission, pending_info, messages}`, or
+  `{:paused, reason, messages, iteration}`.
 
   The `messages` list returned always includes the full updated conversation
   (input messages + new assistant/tool messages from the loop), so the caller
@@ -44,6 +50,7 @@ defmodule Loomkin.AgentLoop do
           {:ok, String.t(), [map()], map()}
           | {:error, term(), [map()]}
           | {:pending_permission, map(), [map()]}
+          | {:paused, term(), [map()], non_neg_integer()}
   def run(messages, opts) do
     config = build_config(opts)
     # Initialize read-file tracker for read-before-write enforcement
@@ -102,6 +109,7 @@ defmodule Loomkin.AgentLoop do
       on_event: Keyword.get(opts, :on_event, fn _name, _payload -> :ok end),
       on_tool_execute: Keyword.get(opts, :on_tool_execute),
       check_permission: Keyword.get(opts, :check_permission),
+      checkpoint: Keyword.get(opts, :checkpoint),
       rate_limiter: Keyword.get(opts, :rate_limiter)
     }
   end
@@ -239,23 +247,44 @@ defmodule Loomkin.AgentLoop do
     messages = messages ++ [assistant_msg]
     emit(config, :new_message, assistant_msg)
 
-    # Execute tool calls
-    case execute_tool_calls(classified.tool_calls, messages, config) do
-      {:ok, messages} ->
+    # Post-LLM checkpoint — let the observer see planned tools before execution
+    checkpoint = %Checkpoint{
+      type: :post_llm,
+      agent_name: config.agent_name,
+      team_id: config.team_id,
+      iteration: iteration,
+      planned_tools: classified.tool_calls,
+      messages: messages
+    }
+
+    case maybe_checkpoint(config, checkpoint) do
+      :continue ->
+        # Execute tool calls
+        case execute_tool_calls(classified.tool_calls, messages, config, iteration) do
+          {:ok, messages} ->
+            emit_usage(config, response)
+            do_loop(messages, config, iteration + 1)
+
+          {:paused, reason, messages} ->
+            emit_usage(config, response)
+            {:paused, reason, messages, iteration}
+
+          {:pending, remaining_tool_calls, messages, pending_data} ->
+            # Permission system paused the loop — return control to caller
+            pending_info = %{
+              remaining_tool_calls: remaining_tool_calls,
+              response: response,
+              iteration: iteration,
+              config: config,
+              pending_data: pending_data
+            }
+
+            {:pending_permission, pending_info, messages}
+        end
+
+      {:pause, reason} ->
         emit_usage(config, response)
-        do_loop(messages, config, iteration + 1)
-
-      {:pending, remaining_tool_calls, messages, pending_data} ->
-        # Permission system paused the loop — return control to caller
-        pending_info = %{
-          remaining_tool_calls: remaining_tool_calls,
-          response: response,
-          iteration: iteration,
-          config: config,
-          pending_data: pending_data
-        }
-
-        {:pending_permission, pending_info, messages}
+        {:paused, reason, messages, iteration}
     end
   end
 
@@ -280,19 +309,26 @@ defmodule Loomkin.AgentLoop do
 
   # -- Tool execution ----------------------------------------------------------
 
-  defp execute_tool_calls([], messages, _config), do: {:ok, messages}
+  defp execute_tool_calls(tool_calls, messages, config) do
+    execute_tool_calls(tool_calls, messages, config, 0)
+  end
 
-  defp execute_tool_calls([tool_call | rest], messages, config) do
-    case execute_single_tool(tool_call, messages, config) do
+  defp execute_tool_calls([], messages, _config, _iteration), do: {:ok, messages}
+
+  defp execute_tool_calls([tool_call | rest], messages, config, iteration) do
+    case execute_single_tool(tool_call, messages, config, iteration) do
       {:ok, messages} ->
-        execute_tool_calls(rest, messages, config)
+        execute_tool_calls(rest, messages, config, iteration)
+
+      {:paused, reason, messages} ->
+        {:paused, reason, messages}
 
       {:pending, pending_data, messages} ->
         {:pending, rest, messages, pending_data}
     end
   end
 
-  defp execute_single_tool(tool_call, messages, config) do
+  defp execute_single_tool(tool_call, messages, config, iteration) do
     tool_name = tool_call[:name]
     tool_args = tool_call[:arguments] || %{}
     tool_call_id = tool_call[:id] || "call_#{Ecto.UUID.generate()}"
@@ -355,7 +391,22 @@ defmodule Loomkin.AgentLoop do
             maybe_track_read_file(tool_name, tool_args, effective_path, result_text)
 
             messages = record_tool_result(messages, config, tool_name, tool_call_id, result_text)
-            {:ok, messages}
+
+            # Post-tool checkpoint — let the observer see the result
+            post_tool_checkpoint = %Checkpoint{
+              type: :post_tool,
+              agent_name: config.agent_name,
+              team_id: config.team_id,
+              iteration: iteration,
+              tool_name: tool_name,
+              tool_result: result_text,
+              messages: messages
+            }
+
+            case maybe_checkpoint(config, post_tool_checkpoint) do
+              :continue -> {:ok, messages}
+              {:pause, reason} -> {:paused, reason, messages}
+            end
 
           {:pending, pending_data} ->
             pending =
@@ -466,6 +517,17 @@ defmodule Loomkin.AgentLoop do
     messages ++ [tool_msg]
   end
 
+  # -- Checkpoint evaluation ----------------------------------------------------
+
+  defp maybe_checkpoint(%{checkpoint: nil}, _checkpoint), do: :continue
+
+  defp maybe_checkpoint(%{checkpoint: callback}, %Checkpoint{} = checkpoint)
+       when is_function(callback, 1) do
+    callback.(checkpoint)
+  end
+
+  defp maybe_checkpoint(_config, _checkpoint), do: :continue
+
   # -- Resume after permission -------------------------------------------------
 
   @doc """
@@ -481,6 +543,7 @@ defmodule Loomkin.AgentLoop do
           {:ok, String.t(), [map()], map()}
           | {:error, term(), [map()]}
           | {:pending_permission, map(), [map()]}
+          | {:paused, term(), [map()], non_neg_integer()}
   def resume(tool_result_text, pending_info, messages) do
     config = pending_info.config
     tool_call_id = pending_info.pending_data.tool_call_id
