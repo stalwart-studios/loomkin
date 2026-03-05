@@ -80,9 +80,6 @@ defmodule Loomkin.Teams.PairMode do
         table = TableRegistry.get_table!(team_id)
         :ets.delete(table, {:pair, pair_id})
 
-        topic = pair_topic(team_id, pair_id)
-        Phoenix.PubSub.unsubscribe(Loomkin.PubSub, topic)
-
         # Notify both agents
         Comms.send_to(team_id, pair_info.coder, {:pair_stopped, pair_id})
         Comms.send_to(team_id, pair_info.reviewer, {:pair_stopped, pair_id})
@@ -140,8 +137,6 @@ defmodule Loomkin.Teams.PairMode do
   """
   @spec broadcast_event(String.t(), String.t(), pair_event(), String.t(), map()) :: :ok
   def broadcast_event(team_id, pair_id, event_type, from, payload \\ %{}) do
-    topic = pair_topic(team_id, pair_id)
-
     message = %{
       event: event_type,
       from: from,
@@ -150,7 +145,11 @@ defmodule Loomkin.Teams.PairMode do
       timestamp: System.monotonic_time(:millisecond)
     }
 
-    Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:pair_event, message})
+    signal = Loomkin.Signals.Collaboration.PairEvent.new!(
+      %{team_id: team_id},
+      subject: pair_id
+    )
+    Loomkin.Signals.publish(%{signal | data: Map.merge(signal.data, message)})
   end
 
   @doc """
@@ -181,8 +180,4 @@ defmodule Loomkin.Teams.PairMode do
   end
 
   # -- Private --
-
-  defp pair_topic(team_id, pair_id) do
-    "team:#{team_id}:pair:#{pair_id}"
-  end
 end

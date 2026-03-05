@@ -4,7 +4,7 @@ defmodule Loomkin.Teams.Agent do
   runs through a Teams.Agent — even solo sessions are a team of one.
 
   Uses Loomkin.AgentLoop for the ReAct cycle, Loomkin.Teams.Role for configuration,
-  and communicates with peers via Phoenix.PubSub.
+  and communicates with peers via Jido Signal Bus.
   """
 
   use GenServer
@@ -614,6 +614,131 @@ defmodule Loomkin.Teams.Agent do
     end
   end
 
+  # --- Signal Bus dispatch (converts signals to tuples for existing handlers) ---
+
+  @impl true
+  def handle_info({:signal, %Jido.Signal{} = sig}, state) do
+    handle_info(sig, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.update"} = sig, state) do
+    from = sig.data[:from] || sig.data["from"]
+    payload = sig.data[:payload] || sig.data
+    handle_info({:context_update, from, payload}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.status"} = sig, state) do
+    handle_info({:agent_status, sig.data.agent_name, sig.data.status}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.role.changed"} = sig, state) do
+    handle_info({:role_changed, sig.data.agent_name, sig.data.old_role, sig.data.new_role}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.keeper.created"} = sig, state) do
+    handle_info({:keeper_created, sig.data}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "collaboration.peer.message"} = sig, state) do
+    msg = sig.data[:message]
+    case msg do
+      {:peer_message, from, content} -> handle_info({:peer_message, from, content}, state)
+      {:context_update, from, payload} -> handle_info({:context_update, from, payload}, state)
+      {:inject_system_message, _} = tuple -> handle_info(tuple, state)
+      {:debate_start, _, _, _} = tuple -> handle_info(tuple, state)
+      {:debate_propose, _, _, _} = tuple -> handle_info(tuple, state)
+      {:debate_critique, _, _, _} = tuple -> handle_info(tuple, state)
+      {:debate_revise, _, _, _} = tuple -> handle_info(tuple, state)
+      {:debate_vote, _, _} = tuple -> handle_info(tuple, state)
+      {:pair_started, _, _, _} = tuple -> handle_info(tuple, state)
+      {:pair_stopped, _} = tuple -> handle_info(tuple, state)
+      {:pair_broadcast, _, _, _} = tuple -> handle_info(tuple, state)
+      {:discovery_relevant, _} = tuple -> handle_info(tuple, state)
+      {:rebalance_needed, _, _} = tuple -> handle_info(tuple, state)
+      {:conflict_detected, _} = tuple -> handle_info(tuple, state)
+      {:query, _, _, _, _} = tuple -> handle_info(tuple, state)
+      {:query_answer, _, _, _, _} = tuple -> handle_info(tuple, state)
+      {:confidence_warning, _} = tuple -> handle_info(tuple, state)
+      {:sub_team_completed, _} = tuple -> handle_info(tuple, state)
+      _ ->
+        from = sig.data[:from] || "unknown"
+        content = if is_binary(msg), do: msg, else: inspect(msg)
+        handle_info({:peer_message, from, content}, state)
+    end
+  end
+
+  def handle_info(%Jido.Signal{type: "team.task.assigned"} = sig, state) do
+    handle_info({:task_assigned, sig.data.task_id, sig.data.agent_name}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.task.completed"} = sig, state) do
+    handle_info({:sub_team_completed, sig.data[:sub_team_id] || sig.data.task_id}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.task.started"} = sig, state) do
+    handle_info({:tasks_unblocked, [sig.data.task_id]}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "collaboration.vote.response"} = sig, state) do
+    handle_info({:vote_request, sig.data.vote_id, nil, nil, nil}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "collaboration.debate.response"} = sig, state) do
+    handle_info({:debate_start, sig.data.debate_id, nil, []}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "decision.logged"} = sig, state) do
+    handle_info({:discovery_relevant, sig.data}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.discovery.relevant"} = sig, state) do
+    handle_info({:discovery_relevant, sig.data}, state)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.dissolved"}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "team.child.created"}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "team.permission.request"}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "team.ask_user." <> _}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "channel." <> _}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.stream." <> _}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.tool." <> _}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.usage"}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.error"}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.escalation"}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(%Jido.Signal{type: _type}, state) do
+    {:noreply, state}
+  end
+
   # --- handle_info for PubSub (idle path) ---
 
   @impl true
@@ -828,7 +953,7 @@ defmodule Loomkin.Teams.Agent do
 
   @impl true
   def handle_info({:debate_start, debate_id, topic, participants}, state) do
-    Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{state.team_id}:debate:#{debate_id}")
+    # Debate signals are already received via collaboration.peer.message subscription
 
     msg = %{
       role: :system,
@@ -901,7 +1026,7 @@ defmodule Loomkin.Teams.Agent do
 
   @impl true
   def handle_info({:pair_started, pair_id, my_role, partner_name}, state) do
-    Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{state.team_id}:pair:#{pair_id}")
+    # Pair signals are already received via collaboration.peer.message subscription
 
     msg = %{
       role: :system,
@@ -918,8 +1043,6 @@ defmodule Loomkin.Teams.Agent do
 
   @impl true
   def handle_info({:pair_stopped, pair_id}, state) do
-    Phoenix.PubSub.unsubscribe(Loomkin.PubSub, "team:#{state.team_id}:pair:#{pair_id}")
-
     msg = %{role: :system, content: "[Pair #{pair_id}] Pair session ended."}
     {:noreply, %{state | messages: state.messages ++ [msg]}}
   end
@@ -1183,11 +1306,16 @@ defmodule Loomkin.Teams.Agent do
 
       response = %{from: agent_name, choice: choice, confidence: 0.5}
 
-      Phoenix.PubSub.broadcast(
-        Loomkin.PubSub,
-        "team:#{team_id}:vote:#{vote_id}",
-        {:vote_response, vote_id, response}
+      Loomkin.Signals.Collaboration.VoteResponse.new!(%{
+        vote_id: vote_id,
+        team_id: team_id
+      })
+      |> Map.put(:data, %{vote_id: vote_id, team_id: team_id, response: response})
+      |> Loomkin.Signals.Extensions.Causality.attach(
+        team_id: team_id,
+        agent_name: to_string(agent_name)
       )
+      |> Loomkin.Signals.publish()
     end)
   end
 
@@ -1276,11 +1404,17 @@ defmodule Loomkin.Teams.Agent do
           to_model: next_model
         })
 
-        Phoenix.PubSub.broadcast(
-          Loomkin.PubSub,
-          "team:#{snapshot.team_id}",
-          {:agent_escalation, snapshot.name, old_model, next_model}
+        Loomkin.Signals.Agent.Escalation.new!(%{
+          agent_name: to_string(snapshot.name),
+          team_id: snapshot.team_id,
+          from_model: to_string(old_model),
+          to_model: to_string(next_model)
+        })
+        |> Loomkin.Signals.Extensions.Causality.attach(
+          team_id: snapshot.team_id,
+          agent_name: to_string(snapshot.name)
         )
+        |> Loomkin.Signals.publish()
 
         # Refresh project_path from ETS so escalation uses the latest directory
         fresh_path = resolve_project_path(snapshot.team_id, Keyword.get(loop_opts, :project_path))
@@ -1397,6 +1531,7 @@ defmodule Loomkin.Teams.Agent do
       agent_name: state.name,
       team_id: state.team_id,
       session_id: state.team_id,
+      reasoning_strategy: state.role_config.reasoning_strategy,
       check_permission: permission_callback,
       checkpoint: checkpoint_callback,
       rate_limiter: fn provider ->
@@ -1469,12 +1604,22 @@ defmodule Loomkin.Teams.Agent do
           :allowed
 
         :ask ->
-          Phoenix.PubSub.broadcast(
-            Loomkin.PubSub,
-            "team:#{team_id}",
-            {:permission_request, team_id, tool_name_str, resolved_path,
-             {:agent, team_id, agent_name}}
+          Loomkin.Signals.Team.PermissionRequest.new!(%{
+            team_id: team_id,
+            tool_name: tool_name_str,
+            tool_path: resolved_path || ""
+          })
+          |> Map.put(:data, %{
+            team_id: team_id,
+            tool_name: tool_name_str,
+            tool_path: resolved_path,
+            source: {:agent, team_id, agent_name}
+          })
+          |> Loomkin.Signals.Extensions.Causality.attach(
+            team_id: team_id,
+            agent_name: to_string(agent_name)
           )
+          |> Loomkin.Signals.publish()
 
           {:pending, %{tool_name: tool_name_str, tool_path: resolved_path}}
       end
@@ -1559,54 +1704,83 @@ defmodule Loomkin.Teams.Agent do
   end
 
   defp handle_loop_event(team_id, agent_name, event_name, payload) do
-    topic = "team:#{team_id}"
-
     if event_name in [:tool_executing, :tool_complete] do
-      Logger.info("[Agent:#{agent_name}] Broadcasting #{event_name} on topic=#{topic}")
+      Logger.info("[Agent:#{agent_name}] Emitting #{event_name} signal for team=#{team_id}")
     end
 
-    case event_name do
-      :stream_start ->
-        Phoenix.PubSub.broadcast(
-          Loomkin.PubSub,
-          topic,
-          {:agent_stream_start, agent_name, payload}
-        )
+    agent_str = to_string(agent_name)
 
-      :stream_delta ->
-        Phoenix.PubSub.broadcast(
-          Loomkin.PubSub,
-          topic,
-          {:agent_stream_delta, agent_name, payload}
-        )
+    signal =
+      case event_name do
+        :stream_start ->
+          Loomkin.Signals.Agent.StreamStart.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      :stream_end ->
-        Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:agent_stream_end, agent_name, payload})
+        :stream_delta ->
+          Loomkin.Signals.Agent.StreamDelta.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      :tool_executing ->
-        Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:tool_executing, agent_name, payload})
+        :stream_end ->
+          Loomkin.Signals.Agent.StreamEnd.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      :tool_complete ->
-        Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:tool_complete, agent_name, payload})
+        :tool_executing ->
+          Loomkin.Signals.Agent.ToolExecuting.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      :usage ->
-        Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:usage, agent_name, payload})
+        :tool_complete ->
+          Loomkin.Signals.Agent.ToolComplete.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      :context_offloaded ->
-        Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:context_offloaded, agent_name, payload})
+        :usage ->
+          Loomkin.Signals.Agent.Usage.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      :tool_error ->
-        Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:agent_error, agent_name, payload})
+        :context_offloaded ->
+          Loomkin.Signals.Context.Offloaded.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      :max_iterations_exceeded ->
-        Phoenix.PubSub.broadcast(Loomkin.PubSub, topic, {:agent_error, agent_name, payload})
+        :tool_error ->
+          Loomkin.Signals.Agent.Error.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
 
-      _ ->
-        :ok
+        :max_iterations_exceeded ->
+          Loomkin.Signals.Agent.Error.new!(%{agent_name: agent_str, team_id: team_id},
+            subject: "payload"
+          )
+          |> Map.put(:data, Map.put(%{agent_name: agent_str, team_id: team_id}, :payload, payload))
+
+        _ ->
+          nil
+      end
+
+    if signal do
+      signal
+      |> Loomkin.Signals.Extensions.Causality.attach(
+        team_id: team_id,
+        agent_name: agent_str
+      )
+      |> Loomkin.Signals.publish()
     end
   rescue
     e ->
-      Logger.debug("[Agent] Broadcast failed: #{Exception.message(e)}")
+      Logger.debug("[Agent] Signal publish failed: #{Exception.message(e)}")
       :ok
   end
 
@@ -1682,11 +1856,38 @@ defmodule Loomkin.Teams.Agent do
     %{state | status: new_status}
   end
 
-  defp broadcast_team(state, event) do
-    Phoenix.PubSub.broadcast(Loomkin.PubSub, "team:#{state.team_id}", event)
+  defp broadcast_team(state, {:agent_status, agent_name, status}) do
+    Loomkin.Signals.Agent.Status.new!(%{
+      agent_name: to_string(agent_name),
+      team_id: state.team_id,
+      status: status
+    })
+    |> Loomkin.Signals.Extensions.Causality.attach(
+      team_id: state.team_id,
+      agent_name: to_string(agent_name)
+    )
+    |> Loomkin.Signals.publish()
   rescue
     e ->
-      Logger.debug("[Agent] Broadcast failed: #{Exception.message(e)}")
+      Logger.debug("[Agent] Signal publish failed: #{Exception.message(e)}")
+      :ok
+  end
+
+  defp broadcast_team(state, {:role_changed, agent_name, old_role, new_role}) do
+    Loomkin.Signals.Agent.RoleChanged.new!(%{
+      agent_name: to_string(agent_name),
+      team_id: state.team_id,
+      old_role: old_role,
+      new_role: new_role
+    })
+    |> Loomkin.Signals.Extensions.Causality.attach(
+      team_id: state.team_id,
+      agent_name: to_string(agent_name)
+    )
+    |> Loomkin.Signals.publish()
+  rescue
+    e ->
+      Logger.debug("[Agent] Signal publish failed: #{Exception.message(e)}")
       :ok
   end
 end

@@ -162,8 +162,10 @@ defmodule LoomkinWeb.WorkspaceLive do
     socket =
       if connected?(socket) do
         Session.subscribe(session_id)
-        Phoenix.PubSub.subscribe(Loomkin.PubSub, "telemetry:updates")
-        Phoenix.PubSub.subscribe(Loomkin.PubSub, "auth:status")
+
+        # Subscribe to session and system signals via the Bus
+        Loomkin.Signals.subscribe("session.**")
+        Loomkin.Signals.subscribe("system.**")
         ensure_index_started(project_path)
 
         team_id = socket.assigns[:team_id]
@@ -751,6 +753,160 @@ defmodule LoomkinWeb.WorkspaceLive do
       end)
 
     {:noreply, assign(socket, reply_target: %{agent: agent_name, team_id: team_id})}
+  end
+
+  # --- Signal Bus dispatch ---
+  # Converts Jido.Signal structs from the Bus into the tuple format
+  # that existing handle_info clauses expect. As more modules migrate to
+  # signals, eventually the tuple clauses will be removed.
+
+  def handle_info({:signal, %Jido.Signal{} = sig}, socket) do
+    handle_info(sig, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.status"} = sig, socket) do
+    %{agent_name: agent_name, status: status} = sig.data
+    handle_info({:agent_status, agent_name, status}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.role.changed"} = sig, socket) do
+    %{agent_name: name, old_role: old_role, new_role: new_role} = sig.data
+    handle_info({:role_changed, name, old_role, new_role}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.escalation"} = sig, socket) do
+    %{agent_name: name, from_model: from, to_model: to} = sig.data
+    handle_info({:agent_escalation, name, from, to}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.stream.start"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_stream_start, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.stream.delta"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_stream_delta, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.stream.end"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_stream_end, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.tool.executing"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:tool_executing, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.tool.complete"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:tool_complete, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.usage"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:usage, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.error"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:agent_error, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.offloaded"} = sig, socket) do
+    %{agent_name: name, payload: payload} = sig.data
+    handle_info({:context_offloaded, name, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.permission.request"} = sig, socket) do
+    %{team_id: tid, tool_name: tn, tool_path: tp, source: source} = sig.data
+    handle_info({:permission_request, tid, tn, tp, source}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.dissolved"} = sig, socket) do
+    %{team_id: tid} = sig.data
+    handle_info({:team_dissolved, tid}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.child.created"} = sig, socket) do
+    %{team_id: tid} = sig.data
+    handle_info({:child_team_created, tid}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.ask_user.question"} = sig, socket) do
+    handle_info({:ask_user_question, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "team.ask_user.answered"} = sig, socket) do
+    %{question_id: qid, answer: answer} = sig.data
+    handle_info({:ask_user_answered, qid, answer}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.update"} = sig, socket) do
+    %{from: from} = sig.data
+    payload = sig.data
+    handle_info({:context_update, from, payload}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "context.keeper.created"} = sig, socket) do
+    handle_info({:keeper_created, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "decision.node.added"} = sig, socket) do
+    handle_info({:node_added, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "decision.pivot.created"} = sig, socket) do
+    handle_info({:pivot_created, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "decision.logged"} = sig, socket) do
+    %{node_id: nid, agent_name: name} = sig.data
+    handle_info({:decision_logged, nid, name}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "channel.message"} = sig, socket) do
+    handle_info({:channel_message, sig.data}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "collaboration.vote.response"} = sig, socket) do
+    %{vote_id: vid, response: resp} = sig.data
+    handle_info({:vote_response, vid, resp}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "system.auth." <> _} = sig, socket) do
+    tuple =
+      case sig.type do
+        "system.auth.connected" -> {:auth_connected, sig.data.provider}
+        "system.auth.disconnected" -> {:auth_disconnected, sig.data.provider}
+        "system.auth.refreshed" -> {:auth_refreshed, sig.data.provider}
+        "system.auth.refresh_failed" -> {:auth_refresh_failed, sig.data.provider, nil}
+        _ -> nil
+      end
+
+    if tuple, do: handle_info(tuple, socket), else: {:noreply, socket}
+  end
+
+  def handle_info(%Jido.Signal{type: "system.metrics.updated"}, socket) do
+    handle_info(:metrics_updated, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "session.message.new"} = sig, socket) do
+    %{session_id: sid} = sig.data
+    msg = Map.get(sig.data, :message, sig.data)
+    handle_info({:new_message, sid, msg}, socket)
+  end
+
+  def handle_info(%Jido.Signal{type: "session.status.changed"} = sig, socket) do
+    %{session_id: sid, status: status} = sig.data
+    handle_info({:session_status, sid, status}, socket)
+  end
+
+  # Catch-all for unhandled signal types — log and ignore
+  def handle_info(%Jido.Signal{type: type}, socket) do
+    Logger.debug("[WorkspaceLive] Unhandled signal type: #{type}")
+    {:noreply, socket}
   end
 
   # --- PubSub Info ---
@@ -2569,13 +2725,22 @@ defmodule LoomkinWeb.WorkspaceLive do
       socket
     else
       Logger.info("[WorkspaceLive] subscribe_to_team(#{team_id}) self=#{inspect(self())}")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:tasks")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:context")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}:decisions")
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "decision_graph:#{team_id}")
+
+      # Subscribe to Jido Signal Bus for typed signals (new path)
+      Loomkin.Signals.subscribe("agent.**")
+      Loomkin.Signals.subscribe("team.**")
+      Loomkin.Signals.subscribe("context.**")
+      Loomkin.Signals.subscribe("decision.**")
+      Loomkin.Signals.subscribe("channel.**")
+      Loomkin.Signals.subscribe("collaboration.**")
+      Loomkin.Signals.subscribe("system.**")
 
       socket = assign(socket, subscribed_teams: MapSet.put(subscribed, team_id))
+
+      # Replay recent decision signals to catch up on events missed before subscription.
+      # The bus delivers replayed signals as regular messages, triggering refresh_decision_graphs.
+      five_min_ago = System.os_time(:microsecond) - 5 * 60 * 1_000_000
+      Loomkin.Signals.replay("decision.**", five_min_ago)
 
       # Synthesize "joined" events for agents that were spawned before we subscribed
       existing_agents =
@@ -3689,16 +3854,18 @@ defmodule LoomkinWeb.WorkspaceLive do
         "Options: #{options_text}. " <>
         "Reply with ONLY your preferred option (exact text)."
 
-    # Subscribe to the team topic to collect agent votes
+    # Subscribe to vote signals
     vote_topic = "ask_user:vote:#{question_id}"
-    Phoenix.PubSub.subscribe(Loomkin.PubSub, vote_topic)
+    Loomkin.Signals.subscribe("collaboration.vote.*")
 
-    Phoenix.PubSub.broadcast(
-      Loomkin.PubSub,
-      "team:#{team_id}",
-      {:peer_message, "system", collective_prompt,
-       %{reply_topic: vote_topic, question_id: question_id, options: options}}
+    signal = Loomkin.Signals.Collaboration.PeerMessage.new!(
+      %{from: "system", team_id: team_id},
+      subject: "vote:#{question_id}"
     )
+    Loomkin.Signals.publish(%{signal | data: Map.merge(signal.data, %{
+      message: {:peer_message, "system", collective_prompt,
+       %{reply_topic: vote_topic, question_id: question_id, options: options}}
+    })})
 
     # Collect votes in a background task and deliver the result
     Task.Supervisor.start_child(Loomkin.Teams.TaskSupervisor, fn ->
@@ -3715,7 +3882,6 @@ defmodule LoomkinWeb.WorkspaceLive do
         end
 
       send_ask_user_answer(question_id, "Collective: #{winner}")
-      Phoenix.PubSub.unsubscribe(Loomkin.PubSub, vote_topic)
     end)
   end
 

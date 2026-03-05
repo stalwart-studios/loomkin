@@ -5,9 +5,22 @@ defmodule Loomkin.Channels.BridgeTest do
 
   alias Loomkin.Channels.Bridge
 
-  @pubsub Loomkin.PubSub
-
   setup :verify_on_exit!
+
+  defp signal(type, data \\ %{}) do
+    %Jido.Signal{
+      id: Ecto.UUID.generate(),
+      type: type,
+      data: data,
+      source: "test",
+      specversion: "1.0.2",
+      datacontenttype: "application/json"
+    }
+  end
+
+  defp send_signal(pid, type, data \\ %{}) do
+    send(pid, {:signal, signal(type, data)})
+  end
 
   setup do
     channel_id = "test-chat-#{System.unique_integer([:positive])}"
@@ -54,7 +67,9 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      Phoenix.PubSub.broadcast(@pubsub, "team:#{team_id}", :team_dissolved)
+      # Publish a signal that the Bridge is subscribed to
+      sig = signal("team.dissolved", %{team_id: team_id})
+      Loomkin.Signals.publish(sig)
       Process.sleep(50)
 
       state = :sys.get_state(pid)
@@ -68,12 +83,8 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      Phoenix.PubSub.broadcast(
-        @pubsub,
-        "telemetry:team:#{team_id}",
-        {:team_budget_warning, %{spent: 8.0, limit: 10.0, threshold: 80}}
-      )
-
+      sig = signal("team.budget.warning", %{spent: 8.0, limit: 10.0, threshold: 80})
+      Loomkin.Signals.publish(sig)
       Process.sleep(50)
 
       state = :sys.get_state(pid)
@@ -91,14 +102,12 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      payload = %{
+      send_signal(pid, "team.ask_user.question", %{
         question_id: "q-1",
         agent_name: "researcher",
         question: "Which approach?",
         options: ["A", "B"]
-      }
-
-      send(pid, {:ask_user_question, payload})
+      })
 
       assert_receive {:question_sent, question, ["A", "B"]}, 500
       assert question =~ "researcher"
@@ -117,7 +126,7 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(pid, {:agent_error, %{agent_name: "coder", error: "timeout"}})
+      send_signal(pid, "agent.error", %{agent_name: "coder", error: "timeout"})
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "coder"
@@ -133,7 +142,7 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(pid, :team_dissolved)
+      send_signal(pid, "team.dissolved", %{team_id: team_id})
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "has been dissolved"
@@ -152,13 +161,13 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(pid, {:new_message, %{role: :assistant, content: "Hello user", agent_name: "lead"}})
+      send_signal(pid, "session.message.new", %{role: :assistant, content: "Hello user", agent_name: "lead"})
 
       assert_receive {:text_sent, "[lead] Hello user"}, 500
     end
 
     test "does not forward tool messages", %{pid: pid} do
-      send(pid, {:new_message, %{role: :tool, content: "tool result", agent_name: "lead"}})
+      send_signal(pid, "session.message.new", %{role: :tool, content: "tool result", agent_name: "lead"})
       Process.sleep(50)
 
       state = :sys.get_state(pid)
@@ -167,7 +176,7 @@ defmodule Loomkin.Channels.BridgeTest do
     end
 
     test "does not forward empty assistant messages", %{pid: pid} do
-      send(pid, {:new_message, %{role: :assistant, content: "", agent_name: "lead"}})
+      send_signal(pid, "session.message.new", %{role: :assistant, content: "", agent_name: "lead"})
       Process.sleep(50)
 
       state = :sys.get_state(pid)
@@ -184,13 +193,14 @@ defmodule Loomkin.Channels.BridgeTest do
       end)
 
       event = %{type: :conflict_detected, agents: ["a", "b"]}
-      send(pid, {:collab_event, event})
+      send_signal(pid, "collaboration.peer.message", %{message: {:collab_event, event}})
 
       assert_receive {:activity_sent, ^event}, 500
     end
 
     test "suppresses info-level collab events at default levels", %{pid: pid} do
-      send(pid, {:collab_event, %{type: :discovery_shared, agents: ["a"]}})
+      event = %{type: :discovery_shared, agents: ["a"]}
+      send_signal(pid, "collaboration.peer.message", %{message: {:collab_event, event}})
       Process.sleep(50)
 
       state = :sys.get_state(pid)
@@ -199,8 +209,8 @@ defmodule Loomkin.Channels.BridgeTest do
     end
 
     test "suppresses noisy events", %{pid: pid} do
-      for event <- [:stream_delta, :tool_executing, :usage] do
-        send(pid, {event, %{}})
+      for type <- ["agent.stream.delta", "agent.tool.executing", "agent.usage"] do
+        send_signal(pid, type)
       end
 
       Process.sleep(50)
@@ -220,10 +230,12 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(
-        pid,
-        {:permission_request, "team-x", "write_file", "/a.ex", {:agent, "team-x", "coder"}}
-      )
+      send_signal(pid, "team.permission.request", %{
+        team_id: "team-x",
+        tool_name: "write_file",
+        tool_path: "/a.ex",
+        agent_name: "coder"
+      })
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "Permission request"
@@ -242,7 +254,7 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(pid, {:team_budget_warning, %{spent: 5.0, limit: 10.0, threshold: 80}})
+      send_signal(pid, "team.budget.warning", %{spent: 5.0, limit: 10.0, threshold: 80})
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "Budget warning"
@@ -258,10 +270,11 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(
-        pid,
-        {:team_escalation, %{agent_name: "coder", from_model: "haiku", to_model: "sonnet"}}
-      )
+      send_signal(pid, "agent.escalation", %{
+        agent_name: "coder",
+        from_model: "haiku",
+        to_model: "sonnet"
+      })
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "coder"
@@ -271,17 +284,13 @@ defmodule Loomkin.Channels.BridgeTest do
     end
 
     test "suppresses team_llm_stop at default levels", %{pid: pid} do
-      send(
-        pid,
-        {:team_llm_stop,
-         %{
-           agent_name: "coder",
-           model: "haiku",
-           cost: 0.001,
-           input_tokens: 100,
-           output_tokens: 50
-         }}
-      )
+      send_signal(pid, "team.llm.stop", %{
+        agent_name: "coder",
+        model: "haiku",
+        cost: 0.001,
+        input_tokens: 100,
+        output_tokens: 50
+      })
 
       Process.sleep(50)
 
@@ -300,7 +309,7 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(pid, {:session_cancelled, "sess-1"})
+      send_signal(pid, "session.cancelled", %{session_id: "sess-1"})
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "`sess-1`"
@@ -315,7 +324,7 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(pid, {:llm_error, "sess-1", "API timeout"})
+      send_signal(pid, "session.llm.error", %{session_id: "sess-1", error: "API timeout"})
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "LLM Error"
@@ -323,7 +332,7 @@ defmodule Loomkin.Channels.BridgeTest do
     end
 
     test "suppresses session_status at default levels", %{pid: pid} do
-      send(pid, {:session_status, "sess-1", :running})
+      send_signal(pid, "session.status.changed", %{session_id: "sess-1", status: :running})
       Process.sleep(50)
 
       state = :sys.get_state(pid)
@@ -332,7 +341,7 @@ defmodule Loomkin.Channels.BridgeTest do
     end
 
     test "suppresses team_available at default levels", %{pid: pid} do
-      send(pid, {:team_available, "sess-1", "team-1"})
+      send_signal(pid, "session.team.available", %{session_id: "sess-1", team_id: "team-1"})
       Process.sleep(50)
 
       state = :sys.get_state(pid)
@@ -341,12 +350,12 @@ defmodule Loomkin.Channels.BridgeTest do
     end
 
     test "suppresses noise events from sessions", %{pid: pid} do
-      for event <- [
-            {:stream_start, "s"},
-            {:stream_end, "s"},
-            {:stream_delta, "s", %{text: "hi"}}
+      for {type, data} <- [
+            {"agent.stream.start", %{}},
+            {"agent.stream.end", %{}},
+            {"agent.stream.delta", %{text: "hi"}}
           ] do
-        send(pid, event)
+        send_signal(pid, type, data)
       end
 
       Process.sleep(50)
@@ -373,16 +382,12 @@ defmodule Loomkin.Channels.BridgeTest do
     test "routes callback via cast", %{binding: binding, pid: pid} do
       expect(Loomkin.MockAdapter, :send_question, fn _b, _qid, _q, _o -> :ok end)
 
-      send(
-        pid,
-        {:ask_user_question,
-         %{
-           question_id: "q-callback",
-           agent_name: "coder",
-           question: "Pick one",
-           options: ["X", "Y"]
-         }}
-      )
+      send_signal(pid, "team.ask_user.question", %{
+        question_id: "q-callback",
+        agent_name: "coder",
+        question: "Pick one",
+        options: ["X", "Y"]
+      })
 
       Process.sleep(50)
 
@@ -430,11 +435,9 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      Phoenix.PubSub.broadcast(
-        @pubsub,
-        "session:sess-live",
-        {:session_cancelled, "sess-live"}
-      )
+      # Publish a session.cancelled signal — Bridge subscribes to "session.**"
+      sig = signal("session.cancelled", %{session_id: "sess-live"})
+      Loomkin.Signals.publish(sig)
 
       assert_receive {:text_sent, text}, 500
       assert text =~ "sess-live"
@@ -511,7 +514,8 @@ defmodule Loomkin.Channels.BridgeTest do
         :ok
       end)
 
-      send(pid, {:collab_event, %{type: :discovery_shared, agents: ["a"]}})
+      event = %{type: :discovery_shared, agents: ["a"]}
+      send(pid, {:signal, signal("collaboration.peer.message", %{message: {:collab_event, event}})})
 
       assert_receive :info_sent, 500
     end
@@ -522,7 +526,7 @@ defmodule Loomkin.Channels.BridgeTest do
       stub(Loomkin.MockAdapter, :send_text, fn _b, _t, _o -> :ok end)
 
       for i <- 1..15 do
-        send(pid, {:agent_error, %{agent_name: "agent", error: "err-#{i}"}})
+        send_signal(pid, "agent.error", %{agent_name: "agent", error: "err-#{i}"})
       end
 
       Process.sleep(100)
@@ -536,7 +540,7 @@ defmodule Loomkin.Channels.BridgeTest do
       stub(Loomkin.MockAdapter, :send_text, fn _b, _t, _o -> :ok end)
 
       for i <- 1..20 do
-        send(pid, {:agent_error, %{agent_name: "agent", error: "err-#{i}"}})
+        send_signal(pid, "agent.error", %{agent_name: "agent", error: "err-#{i}"})
       end
 
       Process.sleep(100)
@@ -549,7 +553,7 @@ defmodule Loomkin.Channels.BridgeTest do
     test "handles adapter send failure gracefully", %{pid: pid} do
       stub(Loomkin.MockAdapter, :send_text, fn _b, _t, _o -> {:error, :network_error} end)
 
-      send(pid, {:agent_error, %{agent_name: "agent", error: "err"}})
+      send_signal(pid, "agent.error", %{agent_name: "agent", error: "err"})
       Process.sleep(50)
 
       state = :sys.get_state(pid)

@@ -27,9 +27,9 @@ defmodule Loomkin.Session do
 
   # --- Public API ---
 
-  @doc "Subscribe to session events via PubSub."
-  def subscribe(session_id) do
-    Phoenix.PubSub.subscribe(Loomkin.PubSub, "session:#{session_id}")
+  @doc "Subscribe to session events via Jido Signal Bus."
+  def subscribe(_session_id) do
+    Loomkin.Signals.subscribe("session.**")
   end
 
   def start_link(opts) do
@@ -181,6 +181,9 @@ defmodule Loomkin.Session do
 
         effective_fast_model =
           validate_model(db_session.fast_model, fast_model || effective_model)
+
+        # Subscribe to task signals for child team completion tracking
+        Loomkin.Signals.subscribe("team.task.**")
 
         state = %__MODULE__{
           id: db_session.id,
@@ -337,11 +340,23 @@ defmodule Loomkin.Session do
   @impl true
   def handle_info({:child_team_created, child_team_id}, state) do
     Logger.info("[Session] Child team created: #{child_team_id} for session #{state.id}")
-    Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{child_team_id}:tasks")
+    # Task signals are already received via team.task.* subscription from init
     child_ids = [child_team_id | state.child_team_ids] |> Enum.uniq()
     broadcast(state.id, {:child_team_available, state.id, child_team_id})
     {:noreply, %{state | child_team_ids: child_ids}}
   end
+
+  # Unwrap signal bus delivery tuples
+  @impl true
+  def handle_info({:signal, %Jido.Signal{} = sig}, state), do: handle_info(sig, state)
+
+  # Convert task completion signal to tuple for existing handler
+  def handle_info(%Jido.Signal{type: "team.task.completed", data: data}, state) do
+    result = Map.get(data, :result, "")
+    handle_info({:task_completed, data.task_id, data.owner, result}, state)
+  end
+
+  def handle_info(%Jido.Signal{}, state), do: {:noreply, state}
 
   @impl true
   def handle_info({:task_completed, _task_id, _agent_name, _result} = event, state) do
@@ -619,8 +634,52 @@ defmodule Loomkin.Session do
       Logger.error("[Session] Error checking child team completion: #{Exception.message(e)}")
   end
 
+  defp broadcast(session_id, {:new_message, _session_id, msg} = _event) do
+    signal = Loomkin.Signals.Session.NewMessage.new!(%{session_id: session_id})
+    Loomkin.Signals.publish(%{signal | data: Map.put(signal.data, :message, msg)})
+  rescue
+    e -> Logger.warning("[Session] Broadcast failed: #{Exception.message(e)}")
+  end
+
+  defp broadcast(session_id, {:session_status, _session_id, status}) do
+    signal = Loomkin.Signals.Session.StatusChanged.new!(%{session_id: session_id, status: status})
+    Loomkin.Signals.publish(signal)
+  rescue
+    e -> Logger.warning("[Session] Broadcast failed: #{Exception.message(e)}")
+  end
+
+  defp broadcast(session_id, {:session_cancelled, _session_id}) do
+    signal = Loomkin.Signals.Session.Cancelled.new!(%{session_id: session_id})
+    Loomkin.Signals.publish(signal)
+  rescue
+    e -> Logger.warning("[Session] Broadcast failed: #{Exception.message(e)}")
+  end
+
+  defp broadcast(session_id, {:team_available, _session_id, team_id}) do
+    signal = Loomkin.Signals.Session.TeamAvailable.new!(%{session_id: session_id, team_id: team_id})
+    Loomkin.Signals.publish(signal)
+  rescue
+    e -> Logger.warning("[Session] Broadcast failed: #{Exception.message(e)}")
+  end
+
+  defp broadcast(session_id, {:child_team_available, _session_id, child_team_id}) do
+    signal = Loomkin.Signals.Session.ChildTeamAvailable.new!(%{session_id: session_id, child_team_id: child_team_id})
+    Loomkin.Signals.publish(signal)
+  rescue
+    e -> Logger.warning("[Session] Broadcast failed: #{Exception.message(e)}")
+  end
+
+  defp broadcast(session_id, {:llm_error, _session_id, error}) do
+    signal = Loomkin.Signals.Session.LlmError.new!(%{session_id: session_id, error: to_string(error)})
+    Loomkin.Signals.publish(signal)
+  rescue
+    e -> Logger.warning("[Session] Broadcast failed: #{Exception.message(e)}")
+  end
+
   defp broadcast(session_id, event) do
-    Phoenix.PubSub.broadcast(Loomkin.PubSub, "session:#{session_id}", event)
+    # Fallback for any unmapped session events
+    signal = Loomkin.Signals.Session.StatusChanged.new!(%{session_id: session_id, status: :unknown})
+    Loomkin.Signals.publish(%{signal | data: Map.put(signal.data, :raw_event, event)})
   rescue
     e -> Logger.warning("[Session] Broadcast failed: #{Exception.message(e)}")
   end

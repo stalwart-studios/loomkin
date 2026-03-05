@@ -8,7 +8,6 @@ defmodule Loomkin.Decisions.Broadcaster do
   alias Loomkin.Decisions.Graph
   alias Loomkin.Teams.Comms
 
-  @pubsub Loomkin.PubSub
   @debounce_ms 5_000
 
   # --- Public API ---
@@ -28,12 +27,10 @@ defmodule Loomkin.Decisions.Broadcaster do
   def init(opts) do
     team_id = Keyword.fetch!(opts, :team_id)
 
-    Phoenix.PubSub.subscribe(@pubsub, "decision_graph")
-    Phoenix.PubSub.subscribe(@pubsub, "decision_graph:#{team_id}")
+    Loomkin.Signals.subscribe("decision.node.added")
 
     state = %{
       team_id: team_id,
-      # %{{goal_id, agent_name} => timestamp} for debouncing
       recent_notifications: %{}
     }
 
@@ -42,8 +39,12 @@ defmodule Loomkin.Decisions.Broadcaster do
   end
 
   @impl true
-  def handle_info({:node_added, node}, state) do
-    if relevant_node?(node, state.team_id) do
+  def handle_info({:signal, %Jido.Signal{} = sig}, state), do: handle_info(sig, state)
+
+  def handle_info(%Jido.Signal{type: "decision.node.added", data: data}, state) do
+    node = Map.get(data, :node)
+
+    if node && relevant_node?(node, state.team_id) do
       state = process_node(node, state)
       {:noreply, state}
     else
@@ -89,7 +90,7 @@ defmodule Loomkin.Decisions.Broadcaster do
         Comms.send_to(acc.team_id, agent_name, {:discovery_relevant, payload})
 
         Logger.debug(
-          "[Broadcaster] Notified #{agent_name} about #{node.node_type} #{node.id} → goal #{goal.id}"
+          "[Broadcaster] Notified #{agent_name} about #{node.node_type} #{node.id} -> goal #{goal.id}"
         )
 
         mark_notified(acc, goal.id, agent_name, now)
