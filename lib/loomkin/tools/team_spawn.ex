@@ -69,6 +69,17 @@ defmodule Loomkin.Tools.TeamSpawn do
         end
       end)
 
+    # Notify parent team listeners (e.g. WorkspaceLive) so they subscribe to the sub-team
+    has_spawned = Enum.any?(results, &String.contains?(&1, "spawned"))
+
+    if parent_team_id && has_spawned do
+      Phoenix.PubSub.broadcast(
+        Loomkin.PubSub,
+        "team:#{parent_team_id}",
+        {:child_team_created, team_id}
+      )
+    end
+
     summary = """
     Team "#{team_name}" created (id: #{team_id})
     Agents:

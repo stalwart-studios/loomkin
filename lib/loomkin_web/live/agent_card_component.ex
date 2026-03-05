@@ -32,7 +32,7 @@ defmodule LoomkinWeb.AgentCardComponent do
       class={[
         "group relative rounded-xl border p-4 animate-fade-in flex flex-col",
         if(@focused,
-          do: "card-brand h-full",
+          do: "card-brand h-full overflow-hidden",
           else: "min-h-[140px] cursor-pointer bg-surface-1 border-subtle hover:bg-surface-2"
         )
       ]}
@@ -41,7 +41,7 @@ defmodule LoomkinWeb.AgentCardComponent do
       <%!-- Question overlay --%>
       <div
         :if={@card.pending_question}
-        class="absolute inset-0 z-10 rounded-xl bg-gradient-to-br from-violet-900/30 to-purple-900/20 border border-violet-500/30 p-4 flex flex-col"
+        class="absolute inset-0 z-10 rounded-xl bg-gradient-to-br from-violet-900/30 to-purple-900/20 border border-violet-500/30 p-4 flex flex-col overflow-auto"
       >
         <div class="flex items-center gap-2 mb-3">
           <div class="w-6 h-6 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0">
@@ -177,11 +177,18 @@ defmodule LoomkinWeb.AgentCardComponent do
       </div>
 
       <%!-- Content area --%>
-      <div class="mt-3 flex-1 min-h-0">
+      <div class={["mt-3 flex-1 min-h-0", @focused && "overflow-auto"]}>
         <%= case @card.content_type do %>
           <% :thinking -> %>
             <p
               class={["text-xs leading-relaxed animate-pulse", !@focused && "line-clamp-4"]}
+              style="color: var(--text-secondary);"
+            >
+              {format_content(@card.latest_content)}
+            </p>
+          <% :last_thinking -> %>
+            <p
+              class={["text-xs leading-relaxed opacity-50", !@focused && "line-clamp-3"]}
               style="color: var(--text-secondary);"
             >
               {format_content(@card.latest_content)}

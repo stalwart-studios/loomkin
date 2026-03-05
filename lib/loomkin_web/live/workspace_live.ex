@@ -1284,10 +1284,22 @@ defmodule LoomkinWeb.WorkspaceLive do
         # Preserve :message content — only reset to :idle if currently :thinking
         card = get_in(s.assigns, [:agent_cards, agent_name])
 
-        if card && card.content_type == :message do
-          s
-        else
-          update_agent_card(s, agent_name, %{content_type: :idle, updated_at: DateTime.utc_now()})
+        cond do
+          card && card.content_type == :message ->
+            s
+
+          card && card.content_type == :thinking && card.latest_content not in [nil, ""] ->
+            # Keep the last thinking content visible (dimmed) while tools run
+            update_agent_card(s, agent_name, %{
+              content_type: :last_thinking,
+              updated_at: DateTime.utc_now()
+            })
+
+          true ->
+            update_agent_card(s, agent_name, %{
+              content_type: :idle,
+              updated_at: DateTime.utc_now()
+            })
         end
       end)
 
@@ -1923,10 +1935,16 @@ defmodule LoomkinWeb.WorkspaceLive do
   # --- Mission Control Mode (three-panel layout) ---
 
   defp render_mode(:mission_control, assigns) do
-    sorted_cards =
+    all_cards =
       assigns.agent_cards
       |> Enum.sort_by(fn {_, c} -> c.updated_at end, DateTime)
       |> Enum.map(fn {_name, card} -> card end)
+
+    # Separate concierge to dedicated top slot
+    {concierge_cards, worker_cards} =
+      Enum.split_with(all_cards, fn c -> c.role in [:concierge] end)
+
+    concierge_card = List.first(concierge_cards)
 
     focused_card =
       if assigns.focused_agent do
@@ -1935,7 +1953,9 @@ defmodule LoomkinWeb.WorkspaceLive do
 
     assigns =
       assigns
-      |> assign(:sorted_cards, sorted_cards)
+      |> assign(:sorted_cards, all_cards)
+      |> assign(:concierge_card, concierge_card)
+      |> assign(:worker_cards, worker_cards)
       |> assign(:focused_card, focused_card)
 
     ~H"""
@@ -1946,8 +1966,8 @@ defmodule LoomkinWeb.WorkspaceLive do
     >
       <%= if @focused_card do %>
         <%!-- Focused single-agent view --%>
-        <div class="flex-1 flex flex-col min-h-0 p-3">
-          <div class="flex items-center gap-2 mb-3">
+        <div class="flex-1 flex flex-col min-h-0 p-3 overflow-hidden">
+          <div class="flex items-center gap-2 mb-3 flex-shrink-0">
             <button
               phx-click="unfocus_agent"
               class="text-xs text-muted hover:text-brand flex items-center gap-1"
@@ -1962,6 +1982,15 @@ defmodule LoomkinWeb.WorkspaceLive do
               </svg>
               All agents
             </button>
+            <span
+              class="text-xs font-medium"
+              style={"color: #{LoomkinWeb.AgentColors.agent_color(@focused_card.name)}"}
+            >
+              {@focused_card.name}
+            </span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded font-medium text-muted" style="background: var(--brand-muted);">
+              {format_agent_role(@focused_card.role)}
+            </span>
           </div>
           <div class="flex-1 overflow-auto min-h-0">
             <LoomkinWeb.AgentCardComponent.agent_card
@@ -1972,14 +2001,29 @@ defmodule LoomkinWeb.WorkspaceLive do
           </div>
         </div>
       <% else %>
-        <%!-- Agent Cards Grid --%>
+        <%!-- Concierge — dedicated top card --%>
+        <div :if={@concierge_card} class="flex-shrink-0 p-3 pb-0">
+          <LoomkinWeb.AgentCardComponent.agent_card
+            card={@concierge_card}
+            focused={false}
+            team_id={@active_team_id}
+          />
+        </div>
+
+        <%!-- Worker Agent Cards Grid --%>
         <div class="flex-shrink-0 p-3 pb-0">
-          <div :if={@sorted_cards == []} class="text-center py-8">
+          <div
+            :if={@concierge_card == nil && @worker_cards == []}
+            class="text-center py-8"
+          >
             <div class="text-muted text-xs">Waiting for agents to spawn...</div>
           </div>
-          <div class={["grid gap-3", card_grid_cols(length(@sorted_cards))]}>
+          <div
+            :if={@worker_cards != []}
+            class={["grid gap-3", card_grid_cols(length(@worker_cards))]}
+          >
             <LoomkinWeb.AgentCardComponent.agent_card
-              :for={card <- @sorted_cards}
+              :for={card <- @worker_cards}
               card={card}
               focused={false}
               team_id={@active_team_id}
@@ -3209,10 +3253,21 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp update_agent_card(socket, _, _), do: socket
 
   defp update_card_status(socket, agent_name, status) do
-    update_agent_card(socket, agent_name, %{
-      status: status,
-      updated_at: DateTime.utc_now()
-    })
+    # Clear stale :last_thinking content when agent goes idle
+    extra =
+      if status == :idle do
+        card = get_in(socket.assigns, [:agent_cards, agent_name])
+
+        if card && card.content_type == :last_thinking do
+          %{content_type: :idle, latest_content: nil}
+        else
+          %{}
+        end
+      else
+        %{}
+      end
+
+    update_agent_card(socket, agent_name, Map.merge(%{status: status, updated_at: DateTime.utc_now()}, extra))
   end
 
   defp update_card_task(socket, agent_name, task_desc) do
@@ -3459,7 +3514,7 @@ defmodule LoomkinWeb.WorkspaceLive do
   end
 
   defp team_tab_visible?(socket),
-    do: socket.assigns[:active_tab] == :team || socket.assigns[:mode] == :mission_control
+    do: socket.assigns[:active_tab] == :team
 
   defp trackable_agent_name(name) when is_binary(name) do
     trimmed = String.trim(name)
@@ -3484,6 +3539,12 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   defp short_team_id(id) when is_binary(id), do: String.slice(id, 0, 8)
   defp short_team_id(_), do: "?"
+
+  defp format_agent_role(role) when is_atom(role) or is_binary(role) do
+    role |> to_string() |> String.replace("_", " ") |> String.capitalize()
+  end
+
+  defp format_agent_role(_), do: "-"
 
   defp do_switch_project(socket, path) do
     team_id = socket.assigns[:team_id]

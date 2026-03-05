@@ -32,7 +32,7 @@ defmodule LoomkinWeb.CoreComponents do
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       role="alert"
       class={[
-        "fixed top-3 right-3 w-80 sm:w-96 z-50 rounded-xl p-3.5 shadow-lg backdrop-blur-sm animate-slide-in-right",
+        "fixed top-3 right-3 w-80 sm:w-96 z-[100] rounded-xl p-3.5 shadow-lg backdrop-blur-sm animate-slide-in-right",
         "border transition-all duration-200",
         @kind == :info && "bg-emerald-950/80 text-emerald-200 border-emerald-500/30",
         @kind == :error && "bg-rose-950/80 text-rose-200 border-rose-500/30"
