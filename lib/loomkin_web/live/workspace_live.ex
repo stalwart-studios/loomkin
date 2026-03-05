@@ -230,7 +230,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       messages: messages,
       session_cost: session_metrics.cost_usd,
       session_tokens: session_metrics.prompt_tokens + session_metrics.completion_tokens,
-      page_title: "Loomkin - #{short_id(session_id)}",
+      page_title: session_page_title(session_id),
       child_teams: child_teams,
       active_team_id: active_team_id,
       switch_project_modal: nil,
@@ -350,13 +350,31 @@ defmodule LoomkinWeb.WorkspaceLive do
             socket
           end
 
+        updated_messages = Enum.take(socket.assigns.messages ++ [user_msg], -@max_messages)
+
+        # Auto-title page from first user message
+        socket =
+          if socket.assigns.messages == [] do
+            title =
+              trimmed
+              |> String.split(~r/[\n\r]/, parts: 2)
+              |> List.first("")
+              |> String.trim()
+              |> String.slice(0, 60)
+
+            title = if title == "", do: "New session", else: title
+            assign(socket, page_title: title)
+          else
+            socket
+          end
+
         {:noreply,
          socket
          |> assign(
            input_text: "",
            async_task: task,
            status: :thinking,
-           messages: Enum.take(socket.assigns.messages ++ [user_msg], -@max_messages)
+           messages: updated_messages
          )
          |> push_event("clear-input", %{})}
     end
@@ -3799,8 +3817,18 @@ defmodule LoomkinWeb.WorkspaceLive do
     end
   end
 
-  defp short_id(id) do
-    String.slice(id, 0, 8)
+  defp session_page_title(session_id) do
+    case Loomkin.Session.Persistence.get_session(session_id) do
+      %{title: title} when is_binary(title) and title != "" ->
+        if Regex.match?(~r/^Session \d{4}-\d{2}-\d{2}/, title) do
+          "Loomkin - #{String.slice(session_id, 0, 8)}"
+        else
+          String.slice(title, 0, 60)
+        end
+
+      _ ->
+        "Loomkin - #{String.slice(session_id, 0, 8)}"
+    end
   end
 
   defp format_cost(cost) when is_number(cost) and cost > 0,

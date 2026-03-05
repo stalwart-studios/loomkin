@@ -84,7 +84,7 @@ defmodule Loomkin.AgentLoop.Strategies do
 
     case result do
       {:ok, response} ->
-        response_text = Jido.AI.Turn.extract_text(response)
+        response_text = extract_text(response)
         usage = extract_usage(response)
 
         config.on_event.(:strategy_complete, %{
@@ -199,13 +199,31 @@ defmodule Loomkin.AgentLoop.Strategies do
   defp maybe_acquire_rate_limit(%{rate_limiter: nil}, _provider), do: :ok
   defp maybe_acquire_rate_limit(%{rate_limiter: callback}, provider), do: callback.(provider)
 
+  defp extract_text(%ReqLLM.Response{} = response) do
+    ReqLLM.Response.text(response) || ""
+  end
+
+  defp extract_text(response), do: Jido.AI.Turn.extract_text(response)
+
+  defp extract_usage(%ReqLLM.Response{usage: usage}) when is_map(usage) do
+    %{
+      input_tokens: Map.get(usage, :input_tokens, 0) || Map.get(usage, "input_tokens", 0),
+      output_tokens: Map.get(usage, :output_tokens, 0) || Map.get(usage, "output_tokens", 0),
+      total_cost: Map.get(usage, :total_cost, 0) || 0
+    }
+  end
+
   defp extract_usage(response) when is_map(response) do
-    usage = response["usage"] || response[:usage] || %{}
+    usage =
+      cond do
+        is_map_key(response, :usage) -> Map.get(response, :usage, %{})
+        is_map_key(response, "usage") -> Map.get(response, "usage", %{})
+        true -> %{}
+      end
 
     %{
-      input_tokens: usage["input_tokens"] || usage[:input_tokens] || usage["prompt_tokens"] || 0,
-      output_tokens:
-        usage["output_tokens"] || usage[:output_tokens] || usage["completion_tokens"] || 0,
+      input_tokens: Map.get(usage, :input_tokens, 0) || Map.get(usage, "input_tokens", 0),
+      output_tokens: Map.get(usage, :output_tokens, 0) || Map.get(usage, "output_tokens", 0),
       total_cost: 0
     }
   end

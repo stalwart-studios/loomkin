@@ -209,6 +209,9 @@ defmodule Loomkin.Session do
   def handle_call({:send_message, text}, from, state) do
     Logger.debug("[Session] send_message session=#{state.id} model=#{state.model}")
 
+    # Auto-title session from first user message if still using default timestamp title
+    state = maybe_auto_title(state, text)
+
     # Spawn bootstrap agents on first message (deferred from session start)
     state = maybe_spawn_bootstrap_agents(state)
 
@@ -743,6 +746,33 @@ defmodule Loomkin.Session do
       {:routed, pid}
     else
       _ -> :not_routed
+    end
+  end
+
+  # Auto-generate a descriptive session title from the first user message.
+  # Only runs once — when the current title is the default timestamp format.
+  defp maybe_auto_title(state, text) do
+    current_title = state.db_session.title || ""
+
+    if Regex.match?(~r/^Session \d{4}-\d{2}-\d{2}/, current_title) do
+      new_title = generate_title(text)
+      Persistence.update_session(state.db_session, %{title: new_title})
+      %{state | db_session: %{state.db_session | title: new_title}}
+    else
+      state
+    end
+  end
+
+  defp generate_title(text) do
+    text
+    # Take first line or first 80 chars
+    |> String.split(~r/[\n\r]/, parts: 2)
+    |> List.first("")
+    |> String.trim()
+    |> String.slice(0, 60)
+    |> case do
+      "" -> "New session"
+      short -> short
     end
   end
 
