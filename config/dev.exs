@@ -1,5 +1,8 @@
 import Config
 
+# Use Docker Postgres port by default; override with DB_PORT for system-installed Postgres
+config :loomkin, Loomkin.Repo, port: String.to_integer(System.get_env("DB_PORT") || "5488")
+
 # Development endpoint configuration
 config :loomkin, LoomkinWeb.Endpoint,
   url: [host: "loom.test", port: 4200],
@@ -24,6 +27,11 @@ config :loomkin, LoomkinWeb.Endpoint,
   ]
 
 config :logger, level: :debug
+
+# anubis_mcp (transitive dep via jido_mcp) logs a spurious warning at startup when no
+# session store adapter is configured, even when the session store is intentionally disabled.
+# Suppress its logging entirely since we don't debug this transitive dependency directly.
+config :anubis_mcp, log: false
 
 # Initialize plugs at runtime for faster development compilation
 config :phoenix, :plug_init_mode, :runtime

@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup dev test format
+.PHONY: help setup dev test format db.up db.down db.reset
 
 help:          ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_.-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 setup:         ## Install all dependencies and configure the project
 	brew bundle
@@ -11,6 +11,7 @@ setup:         ## Install all dependencies and configure the project
 	mise install
 	npm install
 	lefthook install
+	$(MAKE) db.up
 	mix setup
 	@echo ""
 	@echo "If mise-managed tools are not active, add this to your shell config (~/.zshrc or ~/.bashrc):"
@@ -26,3 +27,12 @@ test:          ## Run the test suite
 
 format:        ## Format Elixir source files
 	mix format
+
+db.up:         ## Start the Postgres container
+	docker compose up -d --wait
+
+db.down:       ## Stop the Postgres container
+	docker compose down
+
+db.reset:      ## Reset the database (drop, create, migrate, seed)
+	mix ecto.reset

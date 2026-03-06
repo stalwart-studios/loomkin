@@ -32,6 +32,7 @@ config :loomkin, LoomkinWeb.Endpoint,
 
 # Esbuild configuration
 config :esbuild,
+  version: "0.25.0",
   loomkin: [
     args:
       ~w(js/app.js --bundle --target=es2017 --outdir=../priv/static/assets --external:/fonts/* --external:/images/*),
