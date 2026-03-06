@@ -216,6 +216,18 @@ defmodule LoomkinWeb.WorkspaceLive do
     active_team_id = socket.assigns[:active_team_id] || team_id
     channel_bindings = load_channel_bindings(active_team_id)
 
+    # Load any pending scheduled messages from MessageScheduler (survives reconnects)
+    scheduled_messages =
+      if active_team_id do
+        try do
+          Loomkin.Teams.MessageScheduler.list(active_team_id)
+        catch
+          :exit, _ -> []
+        end
+      else
+        []
+      end
+
     # Replay session message history as activity events so the feed
     # survives reconnections (longpoll or websocket drops).
     history_events = messages_to_activity_events(messages)
@@ -251,6 +263,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       page_title: session_page_title(session_id),
       child_teams: child_teams,
       active_team_id: active_team_id,
+      scheduled_messages: scheduled_messages,
       switch_project_modal: nil,
       recent_projects: [],
       reply_target: nil,
@@ -947,36 +960,25 @@ defmodule LoomkinWeb.WorkspaceLive do
     target_agent = params["target_agent"]
     delay_minutes = String.to_integer(delay)
     team_id = socket.assigns.active_team_id
+    deliver_at = DateTime.add(DateTime.utc_now(), delay_minutes * 60, :second)
 
-    scheduled_msg = %{
-      id: Ecto.UUID.generate(),
-      content: content,
-      target_agent: target_agent,
-      team_id: team_id,
-      delay_minutes: delay_minutes,
-      deliver_at: DateTime.add(DateTime.utc_now(), delay_minutes * 60, :second),
-      scheduled_at: DateTime.utc_now()
-    }
+    case Loomkin.Teams.MessageScheduler.schedule(team_id, content, target_agent, deliver_at) do
+      {:ok, _msg} ->
+        {:noreply,
+         socket
+         |> assign(schedule_popover: false, input_text: "")
+         |> put_flash(:info, "Message scheduled for #{delay_minutes}m from now")
+         |> push_event("clear-input", %{})}
 
-    scheduled = socket.assigns.scheduled_messages ++ [scheduled_msg]
-
-    # Start a timer process to deliver the message
-    Process.send_after(self(), {:deliver_scheduled, scheduled_msg.id}, delay_minutes * 60 * 1000)
-
-    {:noreply,
-     socket
-     |> assign(
-       scheduled_messages: scheduled,
-       schedule_popover: false,
-       input_text: ""
-     )
-     |> put_flash(:info, "Message scheduled for #{delay_minutes}m from now")
-     |> push_event("clear-input", %{})}
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to schedule: #{inspect(reason)}")}
+    end
   end
 
   def handle_event("cancel_scheduled", %{"id" => id}, socket) do
-    scheduled = Enum.reject(socket.assigns.scheduled_messages, &(&1.id == id))
-    {:noreply, assign(socket, scheduled_messages: scheduled)}
+    team_id = socket.assigns.active_team_id
+    Loomkin.Teams.MessageScheduler.cancel(team_id, id)
+    {:noreply, socket}
   end
 
   # --- Enqueue & Guidance ---
@@ -1419,6 +1421,13 @@ defmodule LoomkinWeb.WorkspaceLive do
     Logger.info("[Kin:UI] :team_available team=#{team_id}")
     bindings = load_channel_bindings(team_id)
 
+    scheduled =
+      try do
+        Loomkin.Teams.MessageScheduler.list(team_id)
+      catch
+        :exit, _ -> []
+      end
+
     socket =
       socket
       |> subscribe_to_team(team_id)
@@ -1426,7 +1435,8 @@ defmodule LoomkinWeb.WorkspaceLive do
         team_id: team_id,
         active_team_id: team_id,
         mode: :mission_control,
-        channel_bindings: bindings
+        channel_bindings: bindings,
+        scheduled_messages: scheduled
       )
       |> refresh_roster()
       |> sync_cards_with_roster()
@@ -2272,50 +2282,6 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, put_flash(socket, :info, "Scheduled message delivered to #{agent_name}")}
   end
 
-  def handle_info({:deliver_scheduled, message_id}, socket) do
-    case Enum.find(socket.assigns.scheduled_messages, &(&1.id == message_id)) do
-      nil ->
-        # Already cancelled
-        {:noreply, socket}
-
-      msg ->
-        team_id = msg.team_id
-        target = msg.target_agent
-        content = msg.content
-
-        delivery_result =
-          if target do
-            case Loomkin.Teams.Manager.find_agent(team_id, target) do
-              {:ok, pid} ->
-                Task.Supervisor.start_child(Loomkin.Teams.TaskSupervisor, fn ->
-                  Loomkin.Teams.Agent.send_message(pid, content)
-                end)
-
-                :ok
-
-              :error ->
-                :error
-            end
-          else
-            Session.send_message(socket.assigns.session_id, content)
-            :ok
-          end
-
-        scheduled = Enum.reject(socket.assigns.scheduled_messages, &(&1.id == message_id))
-
-        flash =
-          case delivery_result do
-            :ok -> {:info, "Scheduled message sent to #{target || "Kin"}"}
-            :error -> {:error, "Scheduled delivery failed — agent #{target} not found"}
-          end
-
-        {:noreply,
-         socket
-         |> assign(scheduled_messages: scheduled)
-         |> put_flash(elem(flash, 0), elem(flash, 1))}
-    end
-  end
-
   # Catch-all
   def handle_info(msg, socket) do
     require Logger
@@ -3158,7 +3124,7 @@ defmodule LoomkinWeb.WorkspaceLive do
               type="button"
               phx-click="toggle_scheduler"
               class="flex items-center justify-center w-9 h-9 rounded-lg transition-all duration-200 press-down"
-              style={"border: 1px solid " <> if(@schedule_popover, do: "var(--border-brand)", else: "var(--border-subtle)") <> "; color: " <> if(@schedule_popover, do: "var(--text-brand)", else: "var(--text-muted)") <> "; background: transparent;"}
+              style={"border: 1px solid #{if(@schedule_popover, do: "var(--border-brand)", else: "var(--border-subtle)")}; color: #{if(@schedule_popover, do: "var(--text-brand)", else: "var(--text-muted)")}; background: transparent;"}
               title="Schedule message"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -3601,6 +3567,9 @@ defmodule LoomkinWeb.WorkspaceLive do
       Loomkin.Signals.subscribe("channel.**")
       Loomkin.Signals.subscribe("collaboration.**")
       Loomkin.Signals.subscribe("system.**")
+
+      # Subscribe to Phoenix PubSub for legacy team broadcasts (MessageScheduler, etc.)
+      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}")
 
       socket = assign(socket, subscribed_teams: MapSet.put(subscribed, team_id))
 
@@ -5081,7 +5050,7 @@ defmodule LoomkinWeb.WorkspaceLive do
   end
 
   defp scheduled_count_for(scheduled_messages, agent_name) do
-    Enum.count(scheduled_messages, &(&1[:target_agent] == agent_name))
+    Enum.count(scheduled_messages, &(&1.target_agent == agent_name))
   end
 
   defp agent_is_working?(agent_cards, agent_name) do

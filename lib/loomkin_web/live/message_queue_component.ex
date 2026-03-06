@@ -91,7 +91,6 @@ defmodule LoomkinWeb.MessageQueueComponent do
         id={"queue-list-#{@agent_name}"}
         class="flex-1 overflow-auto"
         phx-hook="SortableQueue"
-        phx-update="ignore"
         data-agent={@agent_name}
       >
         <%= if @queue == [] do %>
@@ -109,7 +108,11 @@ defmodule LoomkinWeb.MessageQueueComponent do
           >
             <%= if @editing_id == msg.id do %>
               <%!-- Inline editor --%>
-              <form phx-submit="save_queued_edit" class="flex flex-col gap-2">
+              <form
+                phx-submit="save_queued_edit"
+                id={"queue-edit-form-#{msg.id}"}
+                class="flex flex-col gap-2"
+              >
                 <input type="hidden" name="agent" value={@agent_name} />
                 <input type="hidden" name="message_id" value={msg.id} />
                 <textarea
@@ -169,7 +172,13 @@ defmodule LoomkinWeb.MessageQueueComponent do
                     ]}>
                       {msg.source}
                     </span>
-                    <span class="text-[10px] text-muted ml-auto flex-shrink-0">
+                    <span
+                      id={"queue-time-#{msg.id}"}
+                      class="text-[10px] text-muted ml-auto flex-shrink-0"
+                      phx-hook="LocalTime"
+                      data-utc-time={if(msg.queued_at, do: DateTime.to_iso8601(msg.queued_at))}
+                      data-format="relative"
+                    >
                       {relative_time(msg.queued_at)}
                     </span>
                   </div>
