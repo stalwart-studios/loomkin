@@ -6,6 +6,7 @@ defmodule Loomkin.Teams.Manager do
   alias Loomkin.Teams.Comms
   alias Loomkin.Teams.ConflictDetector
   alias Loomkin.Teams.Distributed
+  alias Loomkin.Teams.MessageScheduler
   alias Loomkin.Teams.Rebalancer
   alias Loomkin.Teams.TableRegistry
 
@@ -420,6 +421,7 @@ defmodule Loomkin.Teams.Manager do
         Distributed.start_child({Broadcaster, team_id: team_id})
         Distributed.start_child({Rebalancer, team_id: team_id})
         Distributed.start_child({ConflictDetector, team_id: team_id})
+        Distributed.start_child({MessageScheduler, team_id: team_id})
       catch
         :exit, _ -> :ok
       end
@@ -431,7 +433,8 @@ defmodule Loomkin.Teams.Manager do
           {:auto_logger, team_id},
           {:broadcaster, team_id},
           {:rebalancer, team_id},
-          {:conflict_detector, team_id}
+          {:conflict_detector, team_id},
+          {:message_scheduler, team_id}
         ] do
       case Registry.lookup(Loomkin.Teams.AgentRegistry, key) do
         [{pid, _}] -> Distributed.terminate_child(pid)
