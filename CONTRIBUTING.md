@@ -94,6 +94,11 @@ test: add regression test for consensus quorum edge case
 
 Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`, `perf`, `revert`.
 
+**Subject rules:**
+- Must be **fully lowercase** -- no uppercase letters at all, including acronyms (write `ui` not `UI`, `api` not `API`)
+- Max **100 characters** for the full header (type + subject)
+- No period at the end
+
 The PR title must also follow this format -- it becomes the squash-merge commit message on `main`.
 
 ### Git Hooks
