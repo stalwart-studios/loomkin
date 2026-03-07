@@ -8,7 +8,7 @@
 ### Foundation
 
 - [x] **FOUN-01**: LiveView components extracted from workspace_live.ex monolith into focused LiveComponents (agent cards, comms feed, team dashboard, inspector, etc.)
-- [ ] **FOUN-02**: TeamBroadcaster aggregator GenServer sits between Signal Bus and LiveView to batch and throttle events, preventing mailbox overload
+- [x] **FOUN-02**: TeamBroadcaster aggregator GenServer sits between Signal Bus and LiveView to batch and throttle events, preventing mailbox overload
 - [x] **FOUN-03**: Signal Bus subscriptions cleaned up with unsubscribe in terminate/2 and Topics module for topic string management
 
 ### Live Visibility
@@ -71,7 +71,7 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | FOUN-01 | Phase 1 — Monolith Extraction | Complete |
-| FOUN-02 | Phase 2 — Signal Infrastructure | Pending |
+| FOUN-02 | Phase 2 — Signal Infrastructure | Complete |
 | FOUN-03 | Phase 2 — Signal Infrastructure | Complete |
 | VISB-01 | Phase 3 — Live Comms Feed | Pending |
 | VISB-02 | Phase 3 — Live Comms Feed | Pending |

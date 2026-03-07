@@ -57,8 +57,8 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Topics module, Signals.unsubscribe, Agent/Comms subscription cleanup
-- [ ] 02-02-PLAN.md — TeamBroadcaster GenServer with batching and priority bypass
+- [x] 02-01-PLAN.md — Topics module, Signals.unsubscribe, Agent/Comms subscription cleanup
+- [x] 02-02-PLAN.md — TeamBroadcaster GenServer with batching and priority bypass
 - [ ] 02-03-PLAN.md — Wire workspace_live to TeamBroadcaster, remove direct bus subscriptions
 
 ### Phase 3: Live Comms Feed
@@ -162,7 +162,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Monolith Extraction | 6/6 | Complete |  |
-| 2. Signal Infrastructure | 0/3 | Planned | - |
+| 2. Signal Infrastructure | 2/3 | In Progress | - |
 | 3. Live Comms Feed | 0/TBD | Not started | - |
 | 4. Task Graph & Crash Recovery | 0/TBD | Not started | - |
 | 5. Chat Injection & State Machines | 0/TBD | Not started | - |

@@ -4,6 +4,8 @@ defmodule LoomkinWeb.WorkspaceLive do
   alias Loomkin.Session
   alias Loomkin.Session.Manager
   alias Loomkin.Teams
+  alias Loomkin.Teams.TeamBroadcaster
+  alias Loomkin.Teams.Topics
 
   @max_messages 200
   @max_diffs 100
@@ -98,6 +100,10 @@ defmodule LoomkinWeb.WorkspaceLive do
   end
 
   def terminate(_reason, socket) do
+    if broadcaster = socket.assigns[:broadcaster] do
+      DynamicSupervisor.terminate_child(Loomkin.Teams.BroadcasterSupervisor, broadcaster)
+    end
+
     if session_id = socket.assigns[:session_id] do
       Loomkin.Permissions.TrustPolicy.cleanup(session_id)
     end
@@ -171,8 +177,15 @@ defmodule LoomkinWeb.WorkspaceLive do
         # Subscribe to session signals via the Bus
         Loomkin.Signals.subscribe("session.**")
 
-        # Subscribe to all global wildcard signals once
-        socket = subscribe_global_signals(socket)
+        # Start per-session TeamBroadcaster (replaces subscribe_global_signals)
+        {:ok, broadcaster} =
+          DynamicSupervisor.start_child(
+            Loomkin.Teams.BroadcasterSupervisor,
+            {TeamBroadcaster, team_ids: []}
+          )
+
+        TeamBroadcaster.subscribe(broadcaster, self())
+        socket = assign(socket, broadcaster: broadcaster, global_signals_subscribed: true)
 
         ensure_index_started(project_path)
 
@@ -783,6 +796,21 @@ defmodule LoomkinWeb.WorkspaceLive do
   # that existing handle_info clauses expect. As more modules migrate to
   # signals, eventually the tuple clauses will be removed.
 
+  # Batched signals from TeamBroadcaster — critical signals (instant delivery)
+  def handle_info({:team_broadcast, %{critical: signals}}, socket) do
+    for sig <- signals, do: send(self(), {:signal, sig})
+    {:noreply, socket}
+  end
+
+  # Batched signals from TeamBroadcaster — regular batched delivery
+  def handle_info({:team_broadcast, batch}, socket) when is_map(batch) do
+    for {_category, signals} <- batch, sig <- signals do
+      send(self(), {:signal, sig})
+    end
+
+    {:noreply, socket}
+  end
+
   # child_team_created carries the NEW team_id which isn't subscribed yet —
   # accept it if the parent_team_id belongs to this workspace
   def handle_info(
@@ -799,12 +827,9 @@ defmodule LoomkinWeb.WorkspaceLive do
     end
   end
 
+  # TeamBroadcaster pre-filters signals by team_id, so no additional filtering needed.
   def handle_info({:signal, %Jido.Signal{} = sig}, socket) do
-    if signal_for_workspace?(sig, socket) do
-      handle_info(sig, socket)
-    else
-      {:noreply, socket}
-    end
+    handle_info(sig, socket)
   end
 
   def handle_info(%Jido.Signal{type: "agent.status"} = sig, socket) do
@@ -2674,44 +2699,9 @@ defmodule LoomkinWeb.WorkspaceLive do
   # Subscribe to a team's PubSub topics, but only once per team.
   # Also synthesizes "joined" events for agents that already exist (race condition fix).
   # Returns the updated socket with the team tracked in :subscribed_teams.
-  # Check if a signal belongs to this workspace's team(s) or session.
-  # Session signals are filtered separately in their specific handlers.
-  # Signals without team_id are accepted (system-level signals).
-  defp signal_for_workspace?(sig, socket) do
-    signal_team_id =
-      get_in(sig.data, [:team_id]) ||
-        get_in(sig, [Access.key(:extensions, %{}), "loomkin", "team_id"])
-
-    subscribed_teams = socket.assigns[:subscribed_teams] || MapSet.new()
-
-    signal_team_id == nil or MapSet.member?(subscribed_teams, signal_team_id)
-  end
-
-  # Subscribe to global wildcard signal bus topics exactly once per LiveView process.
-  #
-  # Signal types use static paths (e.g. "agent.status", "team.task.completed") without
-  # team_id embedded in the topic, so we cannot scope subscriptions to a specific team.
-  # Instead, every signal is delivered to every LiveView and filtered at dispatch time
-  # via `signal_for_workspace?/2` which checks `signal.data.team_id` against
-  # `socket.assigns.subscribed_teams`.
-  #
-  # These are process-level (PID) subscriptions, so calling them multiple times
-  # results in duplicate signal delivery. The guard prevents re-subscription.
-  defp subscribe_global_signals(socket) do
-    if socket.assigns[:global_signals_subscribed] do
-      socket
-    else
-      Loomkin.Signals.subscribe("agent.**")
-      Loomkin.Signals.subscribe("team.**")
-      Loomkin.Signals.subscribe("context.**")
-      Loomkin.Signals.subscribe("decision.**")
-      Loomkin.Signals.subscribe("channel.**")
-      Loomkin.Signals.subscribe("collaboration.**")
-      Loomkin.Signals.subscribe("system.**")
-
-      assign(socket, global_signals_subscribed: true)
-    end
-  end
+  # Team-based signal filtering is now handled by TeamBroadcaster.
+  # signal_for_workspace?/2 and subscribe_global_signals/1 have been removed —
+  # the broadcaster pre-filters by team_id and subscribes to global bus paths.
 
   defp subscribe_to_team(socket, team_id) do
     subscribed = socket.assigns[:subscribed_teams] || MapSet.new()
@@ -2722,8 +2712,13 @@ defmodule LoomkinWeb.WorkspaceLive do
       require Logger
       Logger.info("[Kin:UI] subscribing to team=#{team_id}")
 
-      # Subscribe to Phoenix PubSub for legacy team broadcasts (MessageScheduler, etc.)
-      Phoenix.PubSub.subscribe(Loomkin.PubSub, "team:#{team_id}")
+      # Subscribe to Phoenix PubSub for session events (MessageScheduler, etc.)
+      Phoenix.PubSub.subscribe(Loomkin.PubSub, Topics.team_pubsub(team_id))
+
+      # Register team with TeamBroadcaster for signal filtering
+      if broadcaster = socket.assigns[:broadcaster] do
+        TeamBroadcaster.add_team(broadcaster, team_id)
+      end
 
       socket = assign(socket, subscribed_teams: MapSet.put(subscribed, team_id))
 
@@ -2851,7 +2846,7 @@ defmodule LoomkinWeb.WorkspaceLive do
     )
 
     # Subscribe to any sub-teams discovered during roster refresh so their
-    # signals (streaming, status, etc.) pass signal_for_workspace? filtering
+    # signals are routed through TeamBroadcaster
     sub_team_ids = if team_id, do: Loomkin.Teams.Manager.list_sub_teams(team_id), else: []
 
     socket =

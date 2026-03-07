@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-03-07T22:49:45Z"
-last_activity: 2026-03-07 — Completed 02-01 topics and subscription lifecycle plan
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-03-07T22:55:01Z"
+last_activity: 2026-03-07 — Completed 02-02 TeamBroadcaster GenServer plan
 progress:
   total_phases: 10
   completed_phases: 1
   total_plans: 9
-  completed_plans: 7
-  percent: 13
+  completed_plans: 8
+  percent: 16
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 ## Current Position
 
 Phase: 2 of 10 (Signal Infrastructure)
-Plan: 1 of 3 in current phase
-Status: Plan 02-01 complete, continuing Phase 2
-Last activity: 2026-03-07 — Completed 02-01 topics and subscription lifecycle plan
+Plan: 2 of 3 in current phase
+Status: Plan 02-02 complete, continuing Phase 2
+Last activity: 2026-03-07 — Completed 02-02 TeamBroadcaster GenServer plan
 
-Progress: [##░░░░░░░░] 13%
+Progress: [##░░░░░░░░] 16%
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [##░░░░░░░░] 13%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02-signal-infrastructure P02 | 3 | 2 tasks | 3 files |
 | Phase 02-signal-infrastructure P01 | 4 | 2 tasks | 6 files |
 | Phase 01-monolith-extraction P06 | 3 | 2 tasks | 4 files |
 | Phase 01-monolith-extraction P05 | 11 | 2 tasks | 3 files |
@@ -76,6 +77,8 @@ Recent decisions affecting current work:
 - [Phase 01-06]: kept existing module compilation smoke tests alongside new live mount test for fast regression catching
 - [Phase 02-01]: Topics module uses regular functions (no macros/compile-time constants); global_bus_paths excludes system.**
 - [Phase 02-01]: Comms.unsubscribe signature changed from (team_id, agent_name) to (subscription_ids) for explicit lifecycle management
+- [Phase 02-02]: Batchable signals grouped into 4 categories (streaming, tools, status, activity) for structured batch delivery
+- [Phase 02-02]: Critical signal types defined as MapSet constant for O(1) lookup; direct send/2 delivery matching Jido pattern
 
 ### Pending Todos
 
@@ -90,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-07T22:49:45Z
-Stopped at: Completed 02-01-PLAN.md
-Resume file: .planning/phases/02-signal-infrastructure/02-01-SUMMARY.md
+Last session: 2026-03-07T22:55:01Z
+Stopped at: Completed 02-02-PLAN.md
+Resume file: .planning/phases/02-signal-infrastructure/02-02-SUMMARY.md
