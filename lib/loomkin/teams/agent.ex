@@ -44,7 +44,8 @@ defmodule Loomkin.Teams.Agent do
     pending_updates: [],
     priority_queue: [],
     pause_requested: false,
-    paused_state: nil
+    paused_state: nil,
+    subscription_ids: []
   ]
 
   # --- Public API ---
@@ -186,7 +187,7 @@ defmodule Loomkin.Teams.Agent do
       {:ok, role_config} ->
         model = Keyword.get(opts, :model) || ModelRouter.default_model()
 
-        Comms.subscribe(team_id, name)
+        {:ok, sub_ids} = Comms.subscribe(team_id, name)
 
         state = %__MODULE__{
           team_id: team_id,
@@ -198,7 +199,8 @@ defmodule Loomkin.Teams.Agent do
           model: model,
           project_path: project_path,
           tools: role_config.tools,
-          permission_mode: permission_mode
+          permission_mode: permission_mode,
+          subscription_ids: sub_ids
         }
 
         Context.register_agent(team_id, name, %{role: role, status: :idle, model: model})
@@ -215,6 +217,17 @@ defmodule Loomkin.Teams.Agent do
         Logger.error("[Kin:agent] UNKNOWN ROLE #{inspect(role)} for #{name}")
         {:stop, {:unknown_role, role}}
     end
+  end
+
+  @impl true
+  def terminate(reason, state) do
+    require Logger
+
+    Logger.info(
+      "[Kin:agent] terminating name=#{state.name} team=#{state.team_id} reason=#{inspect(reason)}"
+    )
+
+    Comms.unsubscribe(state.subscription_ids)
   end
 
   @impl true

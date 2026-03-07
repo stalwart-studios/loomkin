@@ -3,20 +3,41 @@ defmodule Loomkin.Teams.Comms do
 
   alias Loomkin.Signals
   alias Loomkin.Signals.Extensions.Causality
+  alias Loomkin.Teams.Topics
 
-  @doc "Subscribe agent to all team signal paths."
+  @doc """
+  Subscribe agent to all team signal paths.
+
+  Returns `{:ok, subscription_ids}` where `subscription_ids` is a list of
+  subscription references that can be passed to `unsubscribe/1` for cleanup.
+  """
   def subscribe(_team_id, _agent_name) do
-    # Subscribe to all team-scoped signals via the bus
-    Signals.subscribe("agent.**")
-    Signals.subscribe("team.**")
-    Signals.subscribe("context.**")
-    Signals.subscribe("collaboration.**")
-    Signals.subscribe("decision.**")
-    :ok
+    paths = [
+      Topics.agent_all(),
+      Topics.team_all(),
+      Topics.context_all(),
+      Topics.collaboration_all(),
+      Topics.decision_all()
+    ]
+
+    subscription_ids =
+      Enum.reduce(paths, [], fn path, acc ->
+        case Signals.subscribe(path) do
+          {:ok, sub_id} -> [sub_id | acc]
+          _other -> acc
+        end
+      end)
+
+    {:ok, Enum.reverse(subscription_ids)}
   end
 
-  @doc "Unsubscribe agent from all team topics (no-op with signal bus — handled by process termination)."
-  def unsubscribe(_team_id, _agent_name) do
+  @doc """
+  Unsubscribe from the signal bus using previously tracked subscription IDs.
+
+  Accepts the list of subscription IDs returned by `subscribe/2`.
+  """
+  def unsubscribe(subscription_ids) when is_list(subscription_ids) do
+    Enum.each(subscription_ids, &Signals.unsubscribe/1)
     :ok
   end
 
