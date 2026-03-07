@@ -63,6 +63,13 @@ defmodule Loomkin.Auth.TokenStore.IntegrationTest do
     end
 
     Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), pid)
+
+    on_exit(fn ->
+      TokenStore.revoke_tokens(:anthropic)
+      TokenStore.revoke_tokens(:google)
+      TokenStore.revoke_tokens(:openai)
+    end)
+
     :ok
   end
 

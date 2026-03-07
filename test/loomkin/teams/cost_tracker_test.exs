@@ -2,6 +2,7 @@ defmodule Loomkin.Teams.CostTrackerTest do
   use ExUnit.Case, async: false
 
   alias Loomkin.Teams.CostTracker
+  alias Loomkin.Teams.Pricing
 
   setup do
     CostTracker.init()
@@ -75,6 +76,22 @@ defmodule Loomkin.Teams.CostTrackerTest do
       usage = CostTracker.get_agent_usage(team_id, "coder")
       # 1M input at $0.95/M + 1M output at $3.79/M = $4.74 (zai:glm-5 pricing)
       assert_in_delta usage.cost, 4.74, 0.01
+    end
+
+    test "calculates cost from pricing when cost: 0 is provided (provider returns zero)",
+         %{team_id: team_id} do
+      :ok =
+        CostTracker.record_usage(team_id, "agent-1", %{
+          input_tokens: 1000,
+          output_tokens: 500,
+          cost: 0,
+          model: "anthropic:claude-haiku-4-5"
+        })
+
+      usage = CostTracker.get_agent_usage(team_id, "agent-1")
+      expected = Pricing.calculate_cost("anthropic:claude-haiku-4-5", 1000, 500)
+      assert usage.cost > 0
+      assert_in_delta usage.cost, expected, 0.000001
     end
   end
 
