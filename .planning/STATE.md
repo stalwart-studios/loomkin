@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-06-PLAN.md
-last_updated: "2026-03-07T16:59:31Z"
-last_activity: 2026-03-07 — Phase 1 gap closure complete, all 6 plans executed
+status: in-progress
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-03-07T22:49:45Z"
+last_activity: 2026-03-07 — Completed 02-01 topics and subscription lifecycle plan
 progress:
   total_phases: 10
   completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 10
+  total_plans: 9
+  completed_plans: 7
+  percent: 13
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-07)
 
 **Core value:** Humans can see exactly what agents are doing and saying to each other in real-time, and intervene naturally at any moment — without breaking the autonomous flow.
-**Current focus:** Phase 1 — Monolith Extraction
+**Current focus:** Phase 2 — Signal Infrastructure
 
 ## Current Position
 
-Phase: 1 of 10 (Monolith Extraction) -- COMPLETE
-Plan: 6 of 6 in current phase
-Status: Phase 1 complete (all plans including gap closure), ready for Phase 2
-Last activity: 2026-03-07 — Completed 01-06 gap closure plan
+Phase: 2 of 10 (Signal Infrastructure)
+Plan: 1 of 3 in current phase
+Status: Plan 02-01 complete, continuing Phase 2
+Last activity: 2026-03-07 — Completed 02-01 topics and subscription lifecycle plan
 
-Progress: [#░░░░░░░░░] 10%
+Progress: [##░░░░░░░░] 13%
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [#░░░░░░░░░] 10%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02-signal-infrastructure P01 | 4 | 2 tasks | 6 files |
 | Phase 01-monolith-extraction P06 | 3 | 2 tasks | 4 files |
 | Phase 01-monolith-extraction P05 | 11 | 2 tasks | 3 files |
 | Phase 01-monolith-extraction P03 | 5 | 2 tasks | 2 files |
@@ -73,6 +74,8 @@ Recent decisions affecting current work:
 - [Phase 01-05]: workspace_live at 3968 lines; remaining code is orchestration (signals, cards, activity) not UI rendering
 - [Phase 01-06]: assert component DOM markers (message-input, agent-comms) instead of wrapper ids for reliable liveview test assertions
 - [Phase 01-06]: kept existing module compilation smoke tests alongside new live mount test for fast regression catching
+- [Phase 02-01]: Topics module uses regular functions (no macros/compile-time constants); global_bus_paths excludes system.**
+- [Phase 02-01]: Comms.unsubscribe signature changed from (team_id, agent_name) to (subscription_ids) for explicit lifecycle management
 
 ### Pending Todos
 
@@ -87,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-07T16:59:31Z
-Stopped at: Completed 01-06-PLAN.md
-Resume file: None
+Last session: 2026-03-07T22:49:45Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: .planning/phases/02-signal-infrastructure/02-01-SUMMARY.md
