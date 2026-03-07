@@ -187,6 +187,8 @@ defmodule Loomkin.ConfigTest do
 
       assert Loomkin.Config.get(:model, :default) == "custom:model"
       assert Loomkin.Config.get(:model, :editor) == "custom:editor"
+    after
+      Loomkin.Config.load(@test_dir)
     end
   end
 
