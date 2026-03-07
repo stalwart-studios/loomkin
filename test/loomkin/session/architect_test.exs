@@ -9,6 +9,8 @@ defmodule Loomkin.Session.ArchitectTest do
   setup do
     File.mkdir_p!(Path.join(@project_path, "lib"))
     File.write!(Path.join(@project_path, "lib/app.ex"), "defmodule App do end\n")
+    # Reset config to defaults so tests don't depend on global ETS state
+    Loomkin.Config.load(@project_path)
     on_exit(fn -> File.rm_rf!(@project_path) end)
     :ok
   end
