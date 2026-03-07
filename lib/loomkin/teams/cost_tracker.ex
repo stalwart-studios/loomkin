@@ -223,7 +223,10 @@ defmodule Loomkin.Teams.CostTracker do
   # Resolve cost: use provided cost, or auto-calculate from model + tokens via Pricing
   defp resolve_cost(usage) do
     case usage[:cost] do
-      nil ->
+      cost when is_number(cost) and cost > 0 ->
+        cost
+
+      _ ->
         model = usage[:model]
         input = usage[:input_tokens] || 0
         output = usage[:output_tokens] || 0
@@ -233,9 +236,6 @@ defmodule Loomkin.Teams.CostTracker do
         else
           0
         end
-
-      cost ->
-        cost
     end
   end
 end

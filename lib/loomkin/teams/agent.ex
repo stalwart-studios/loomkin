@@ -2143,7 +2143,18 @@ defmodule Loomkin.Teams.Agent do
 
   defp track_usage(state, %{usage: usage}) do
     total_tokens = (usage[:input_tokens] || 0) + (usage[:output_tokens] || 0)
-    cost = usage[:total_cost] || 0
+    raw_cost = usage[:total_cost] || 0
+
+    cost =
+      if raw_cost > 0 do
+        raw_cost
+      else
+        Loomkin.Teams.Pricing.calculate_cost(
+          state.model,
+          usage[:input_tokens] || 0,
+          usage[:output_tokens] || 0
+        )
+      end
 
     case RateLimiter.record_usage(state.team_id, to_string(state.name), %{
            tokens: total_tokens,
