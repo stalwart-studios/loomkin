@@ -78,18 +78,19 @@ defmodule LoomkinWeb.AgentCardComponent do
       phx-click="focus_card_agent"
       phx-value-agent={@card.name}
       class={[
-        "group relative rounded-xl p-4 animate-fade-in flex flex-col",
+        "group relative rounded-lg p-4 animate-fade-in flex flex-col card-grain",
         if(@focused,
-          do: "card-brand h-full overflow-hidden",
+          do: "card-brand card-focused-glow h-full overflow-hidden",
           else: "min-h-[140px] cursor-pointer card-elevated hover-lift"
         ),
         card_state_class(@card.content_type, @card.status)
       ]}
+      style={card_border_style(@card.content_type, @card.last_tool)}
     >
       <%!-- Question overlay --%>
       <div
         :if={@card.pending_question}
-        class="absolute inset-0 z-10 rounded-xl bg-gradient-to-br from-violet-900/30 to-purple-900/20 border border-violet-500/30 p-4 flex flex-col overflow-auto"
+        class="absolute inset-0 z-10 rounded-lg bg-gradient-to-br from-violet-900/30 to-purple-900/20 border border-violet-500/30 p-4 flex flex-col overflow-auto"
       >
         <div class="flex items-center gap-2 mb-3">
           <div class="w-6 h-6 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0">
@@ -131,25 +132,19 @@ defmodule LoomkinWeb.AgentCardComponent do
         </div>
       </div>
 
-      <%!-- Header: status dot, name, role badge, action buttons --%>
+      <%!-- Header: status dot, name, action buttons --%>
       <div class="flex items-center gap-2">
         <span class={[
-          "w-2 h-2 rounded-full flex-shrink-0 status-dot-transition",
+          "w-1.5 h-1.5 rounded-full flex-shrink-0 status-dot-transition",
           status_dot_class(@card.status)
         ]}>
         </span>
         <span
           class="text-sm font-medium truncate"
           style={"color: #{LoomkinWeb.AgentColors.agent_color(@card.name)}"}
+          title={format_role(@card.role)}
         >
           {@card.name}
-        </span>
-        <span
-          class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium text-muted"
-          style="background: var(--brand-muted);"
-        >
-          {role_icon(assigns, @card.role)}
-          {format_role(@card.role)}
         </span>
         <span
           :if={@model}
@@ -234,37 +229,6 @@ defmodule LoomkinWeb.AgentCardComponent do
             </svg>
           </button>
         </div>
-
-        <%!-- Queue badge --%>
-        <button
-          :if={@queue_count > 0}
-          phx-click="open_queue_drawer"
-          phx-value-agent={@card.name}
-          phx-value-team-id={@team_id}
-          class="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors cursor-pointer flex-shrink-0"
-          title={"#{@queue_count} queued messages"}
-        >
-          <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z" />
-          </svg>
-          {@queue_count}
-        </button>
-
-        <%!-- Scheduled indicator --%>
-        <span
-          :if={@scheduled_count > 0}
-          class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-400 flex-shrink-0"
-          title={"#{@scheduled_count} scheduled messages"}
-        >
-          <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-            <path
-              fill-rule="evenodd"
-              d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z"
-              clip-rule="evenodd"
-            />
-          </svg>
-          {@scheduled_count}
-        </span>
       </div>
 
       <%!-- Capability bars --%>
@@ -331,22 +295,6 @@ defmodule LoomkinWeb.AgentCardComponent do
         </div>
       </div>
 
-      <%!-- Budget micro-bar --%>
-      <div
-        :if={@budget_limit > 0}
-        class="mt-2 flex items-center gap-2"
-      >
-        <div class="flex-1 h-1 rounded-full bg-surface-3 overflow-hidden">
-          <div
-            class={["h-full rounded-full", budget_color(@budget_used, @budget_limit)]}
-            style={"width: #{min(budget_pct(@budget_used, @budget_limit), 100)}%"}
-          />
-        </div>
-        <span class="text-[9px] font-mono text-muted">
-          {format_tokens(@budget_used)}
-        </span>
-      </div>
-
       <%!-- Footer: current task --%>
       <div
         :if={@card.current_task}
@@ -364,12 +312,23 @@ defmodule LoomkinWeb.AgentCardComponent do
 
   # --- Card state animation class ---
 
-  defp card_state_class(:thinking, _status), do: "agent-card-thinking"
-  defp card_state_class(:tool_call, _status), do: "agent-card-working"
-  defp card_state_class(:streaming, _status), do: "agent-card-streaming"
+  defp card_state_class(:thinking, _status), do: "card-breathing"
+  defp card_state_class(:tool_call, _status), do: "card-tool-active"
+  defp card_state_class(:streaming, _status), do: "card-streaming"
   defp card_state_class(_content_type, :paused), do: "agent-card-paused"
   defp card_state_class(_content_type, :blocked), do: "agent-card-blocked"
+  defp card_state_class(_content_type, :error), do: "card-error"
+  defp card_state_class(nil, :idle), do: "card-idle"
   defp card_state_class(_content_type, _status), do: nil
+
+  # --- Card border style for tool-active state ---
+
+  defp card_border_style(:tool_call, %{name: name}) when is_binary(name) do
+    color = tool_config(name).color
+    "border-color: #{color}; box-shadow: 0 0 10px #{color}1a;"
+  end
+
+  defp card_border_style(_content_type, _last_tool), do: nil
 
   # --- Status helpers ---
 
@@ -381,53 +340,6 @@ defmodule LoomkinWeb.AgentCardComponent do
   defp status_dot_class(:waiting_permission), do: "bg-amber-400 agent-dot-thinking"
   defp status_dot_class(:complete), do: "bg-emerald-400"
   defp status_dot_class(_), do: "bg-zinc-500"
-
-  # --- Role icons ---
-
-  defp role_icon(assigns, role) do
-    assigns = assign(assigns, :role, role)
-
-    ~H"""
-    <%= case @role do %>
-      <% :concierge -> %>
-        <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-        </svg>
-      <% r when r in [:researcher, :orienter] -> %>
-        <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-          <path
-            fill-rule="evenodd"
-            d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-            clip-rule="evenodd"
-          />
-        </svg>
-      <% :coder -> %>
-        <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-          <path
-            fill-rule="evenodd"
-            d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z"
-            clip-rule="evenodd"
-          />
-        </svg>
-      <% :reviewer -> %>
-        <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-          <path
-            fill-rule="evenodd"
-            d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-            clip-rule="evenodd"
-          />
-        </svg>
-      <% _ -> %>
-        <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-          <path
-            fill-rule="evenodd"
-            d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12z"
-            clip-rule="evenodd"
-          />
-        </svg>
-    <% end %>
-    """
-  end
 
   # --- Capability bars ---
 
@@ -519,31 +431,4 @@ defmodule LoomkinWeb.AgentCardComponent do
   end
 
   defp format_model(_), do: ""
-
-  # --- Budget helpers ---
-
-  defp budget_pct(_used, 0), do: 0
-  defp budget_pct(used, limit), do: round(used / limit * 100)
-
-  defp budget_color(used, limit) do
-    pct = budget_pct(used, limit)
-
-    cond do
-      pct >= 80 -> "bg-red-400"
-      pct >= 50 -> "bg-amber-400"
-      true -> "bg-emerald-400"
-    end
-  end
-
-  defp format_tokens(0), do: ""
-
-  defp format_tokens(tokens) when tokens >= 1_000_000 do
-    "#{Float.round(tokens / 1_000_000, 1)}M"
-  end
-
-  defp format_tokens(tokens) when tokens >= 1_000 do
-    "#{Float.round(tokens / 1_000, 1)}k"
-  end
-
-  defp format_tokens(tokens), do: "#{tokens}"
 end

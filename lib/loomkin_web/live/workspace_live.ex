@@ -7,7 +7,6 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   @max_messages 200
   @max_diffs 100
-  @max_shell_commands 100
   @roster_debounce_ms 50
 
   def mount(params, _session, socket) do
@@ -25,7 +24,6 @@ defmodule LoomkinWeb.WorkspaceLive do
         selected_file: nil,
         file_content: nil,
         diffs: [],
-        shell_commands: [],
         pending_permissions: [],
         page_title: "Loomkin Workspace",
         team_id: params["team_id"],
@@ -51,7 +49,6 @@ defmodule LoomkinWeb.WorkspaceLive do
         mode: :mission_control,
         focused_agent: nil,
         inspector_mode: :auto_follow,
-        active_inspector_tab: :files,
         collapsed_inspector: false,
         # Command palette
         command_palette_open: false,
@@ -88,7 +85,9 @@ defmodule LoomkinWeb.WorkspaceLive do
         schedule_delay_minutes: 5,
         # Kin management panel
         kin_panel_open: false,
-        kin_agents: []
+        kin_agents: [],
+        # File explorer drawer
+        file_drawer_open: false
       )
       |> stream(:comms_events, [])
 
@@ -487,7 +486,7 @@ defmodule LoomkinWeb.WorkspaceLive do
     end
   end
 
-  @valid_tabs ~w(files diff terminal graph)
+  @valid_tabs ~w(files diff graph)
   def handle_event("switch_tab", %{"tab" => tab}, socket) when tab in @valid_tabs do
     tab_atom = String.to_existing_atom(tab)
 
@@ -528,6 +527,10 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   def handle_event("toggle_trust_panel", _params, socket) do
     {:noreply, update(socket, :trust_expanded, &(!&1))}
+  end
+
+  def handle_event("toggle_file_drawer", _params, socket) do
+    {:noreply, assign(socket, file_drawer_open: !socket.assigns.file_drawer_open)}
   end
 
   @valid_trust_presets ~w(strict balanced autonomous full_trust)
@@ -650,11 +653,10 @@ defmodule LoomkinWeb.WorkspaceLive do
   end
 
   def handle_event("keyboard_shortcut", %{"key" => "focus_panel_4"}, socket) do
-    {:noreply, assign(socket, active_inspector_tab: :graph, inspector_mode: :pinned)}
+    {:noreply, assign(socket, file_drawer_open: !socket.assigns.file_drawer_open)}
   end
 
   def handle_event("keyboard_shortcut", %{"key" => "focus_panel_5"}, socket) do
-    # Chat tab removed from inspector — ignore shortcut
     {:noreply, socket}
   end
 
@@ -694,13 +696,12 @@ defmodule LoomkinWeb.WorkspaceLive do
      )}
   end
 
-  @palette_valid_tabs ~w(files diff terminal graph)
+  @palette_valid_tabs ~w(files diff)
   def handle_event("palette_select", %{"type" => "tab", "value" => tab}, socket)
       when tab in @palette_valid_tabs do
     {:noreply,
      assign(socket,
-       active_inspector_tab: String.to_existing_atom(tab),
-       inspector_mode: :pinned,
+       file_drawer_open: true,
        command_palette_open: false,
        command_palette_query: "",
        command_palette_results: []
@@ -1301,15 +1302,6 @@ defmodule LoomkinWeb.WorkspaceLive do
           # Append preserves chronological order required by DiffComponent rendering
           assign(socket, diffs: Enum.take(socket.assigns.diffs ++ [diff], -@max_diffs))
 
-        tool_name == "shell" ->
-          cmd = parse_shell_result(result)
-
-          # Append preserves chronological order required by TerminalComponent rendering
-          assign(socket,
-            shell_commands:
-              Enum.take(socket.assigns.shell_commands ++ [cmd], -@max_shell_commands)
-          )
-
         true ->
           socket
       end
@@ -1522,6 +1514,10 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   def handle_info(:close_kin_panel, socket) do
     {:noreply, assign(socket, kin_panel_open: false)}
+  end
+
+  def handle_info(:close_file_drawer, socket) do
+    {:noreply, assign(socket, file_drawer_open: false)}
   end
 
   def handle_info(:reload_kin_agents, socket) do
@@ -2004,18 +2000,13 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, assign(socket, focused_agent: nil, inspector_mode: :auto_follow)}
   end
 
-  # Messages from ContextInspectorComponent
-  def handle_info({:inspector_tab, tab}, socket) do
-    {:noreply, assign(socket, active_inspector_tab: tab, inspector_mode: :pinned)}
-  end
-
   def handle_info({:resume_follow}, socket) do
     {:noreply, assign(socket, inspector_mode: :auto_follow)}
   end
 
-  # From activity feed file clicks
+  # From activity feed file clicks — open the file drawer
   def handle_info({:inspector_file, path}, socket) do
-    {:noreply, assign(socket, active_inspector_tab: :files, selected_file: path)}
+    {:noreply, assign(socket, selected_file: path, file_drawer_open: true)}
   end
 
   # New event types for activity feed
@@ -2263,9 +2254,16 @@ defmodule LoomkinWeb.WorkspaceLive do
       {render_command_palette(assigns)}
 
       <%!-- ── Header ── --%>
-      <header class="flex-shrink-0 flex items-center gap-2 px-3 py-2 sm:px-4 lg:px-5 relative bg-surface-1 border-b border-subtle z-50">
-        <%!-- Brand mark --%>
-        <a href="/" class="flex items-center gap-2 flex-shrink-0 group mr-1">
+      <header class="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 sm:px-4 lg:px-5 relative bg-surface-1 border-b border-subtle z-50">
+        <%!-- Brand mark — pulses when system is active --%>
+        <a
+          href="/"
+          class={[
+            "flex items-center gap-2 flex-shrink-0 group",
+            @status in [:thinking, :executing_tool] && "brand-active"
+          ]}
+          title={status_label(@status, @current_tool_name)}
+        >
           <svg
             class="w-5 h-5 transition-transform duration-200 group-hover:scale-110"
             viewBox="0 0 32 32"
@@ -2281,13 +2279,10 @@ defmodule LoomkinWeb.WorkspaceLive do
             <circle cx="12" cy="14" r="3" fill="#F59E0B" />
             <circle cx="20" cy="14" r="3" fill="#F59E0B" />
           </svg>
-          <span class="text-sm font-semibold bg-gradient-to-r from-violet-400 to-purple-400 bg-clip-text text-transparent tracking-tight hidden sm:inline">
+          <span class="text-[13px] font-medium bg-gradient-to-r from-violet-400/80 to-purple-400/80 bg-clip-text text-transparent tracking-tight hidden sm:inline">
             Loomkin
           </span>
         </a>
-
-        <%!-- Separator --%>
-        <div class="hidden sm:block w-px h-4 flex-shrink-0 bg-border-default"></div>
 
         <%!-- Thinking model selector --%>
         <.live_component
@@ -2313,13 +2308,10 @@ defmodule LoomkinWeb.WorkspaceLive do
           class="hidden md:flex"
         />
 
-        <%!-- Separator --%>
-        <div class="hidden md:block w-px h-4 flex-shrink-0 bg-border-default"></div>
-
         <%!-- Project pill --%>
         <button
           phx-click="initiate_switch_project"
-          class="hidden md:flex items-center gap-1.5 px-2 py-1 rounded-md text-xs interactive press-down text-secondary"
+          class="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] interactive press-down text-secondary"
           title={@project_path}
         >
           <span class="relative flex h-1.5 w-1.5 flex-shrink-0">
@@ -2335,25 +2327,19 @@ defmodule LoomkinWeb.WorkspaceLive do
           :if={@mode == :mission_control && @active_team_id}
           class="hidden md:flex items-center gap-1.5"
         >
-          <div class="w-px h-4 flex-shrink-0 bg-border-default"></div>
-          <div class="flex items-center gap-1.5 px-2 py-1 rounded-md bg-brand-subtle">
+          <div class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-subtle">
             <span class="text-brand">
               <.icon name="hero-user-group-mini" class="w-3 h-3" />
             </span>
-            <span class="text-xs font-medium text-brand">
-              {short_team_id(@active_team_id)}
-            </span>
-            <span class="text-[10px] text-muted">
+            <span class="text-[11px] font-medium text-brand">
               {length(@cached_agents)}
             </span>
           </div>
-
-          {render_header_channel_badges(assigns)}
           <select
             :if={@child_teams != []}
             phx-change="switch_team"
             name="team-id"
-            class="max-w-[8rem] truncate text-xs rounded-md px-2 py-1 focus:outline-none bg-surface-2 border border-subtle text-secondary"
+            class="max-w-[8rem] truncate text-[11px] rounded-md px-1.5 py-0.5 focus:outline-none bg-surface-2 border border-subtle text-secondary"
           >
             <option
               :for={tid <- [@team_id | @child_teams]}
@@ -2369,16 +2355,13 @@ defmodule LoomkinWeb.WorkspaceLive do
         <div class="flex-1"></div>
 
         <%!-- Right: Controls --%>
-        <div class="flex items-center gap-1.5">
-          <%!-- Cost pill --%>
+        <div class="flex items-center gap-1">
+          <%!-- Cost --%>
           <a
             href="/dashboard"
-            class="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-all duration-200 interactive text-muted"
+            class="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-all duration-200 interactive text-muted"
             title="View dashboard"
           >
-            <span class="text-brand opacity-70">
-              <.icon name="hero-sparkles-mini" class="w-3 h-3" />
-            </span>
             <span class="font-mono text-secondary">
               ${format_cost(@session_cost)}
             </span>
@@ -2387,20 +2370,28 @@ defmodule LoomkinWeb.WorkspaceLive do
             </span>
           </a>
 
+          <%!-- File Explorer --%>
+          <button
+            phx-click="toggle_file_drawer"
+            class={[
+              "flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] transition-colors hover:bg-surface-2",
+              if(@file_drawer_open, do: "text-brand", else: "text-muted")
+            ]}
+            title="Explorer (files, diff)"
+          >
+            <.icon name="hero-folder-open-mini" class="w-3.5 h-3.5" />
+          </button>
+
           <%!-- Kin Management --%>
           <button
             phx-click="open_kin_panel"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hover:bg-surface-2 text-muted"
+            class="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] transition-colors hover:bg-surface-2 text-muted"
             title="Manage Kin"
           >
             <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
               <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM14.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.569-1.175 6.002 6.002 0 0111.908 0c.058.467-.172.92-.57 1.174A9.953 9.953 0 017 18a9.953 9.953 0 01-5.385-1.572zM14.5 16h-.106c.07-.297.088-.611.048-.933a7.47 7.47 0 00-1.588-3.755 4.502 4.502 0 015.874 2.636.818.818 0 01-.36.98A7.465 7.465 0 0114.5 16z" />
             </svg>
-            <span class="hidden sm:inline">Kin</span>
           </button>
-
-          <%!-- Separator --%>
-          <div class="w-px h-4 flex-shrink-0 bg-border-default"></div>
 
           <%!-- Session switcher --%>
           <.live_component
@@ -2409,12 +2400,6 @@ defmodule LoomkinWeb.WorkspaceLive do
             session_id={@session_id}
             project_path={@project_path}
           />
-
-          <%!-- Status pill --%>
-          <div class={status_badge_class(@status)}>
-            <span class={status_dot_class(@status)} />
-            <span class="hidden sm:inline">{status_label(@status, @current_tool_name)}</span>
-          </div>
         </div>
       </header>
 
@@ -2430,6 +2415,18 @@ defmodule LoomkinWeb.WorkspaceLive do
         id="kin-panel"
         active_team_id={@active_team_id}
         active_agents={@cached_agents}
+      />
+
+      <%!-- File Explorer Drawer --%>
+      <.live_component
+        module={LoomkinWeb.FileExplorerDrawerComponent}
+        id="file-explorer-drawer"
+        open={@file_drawer_open}
+        project_path={@explorer_path}
+        file_tree_version={@file_tree_version}
+        selected_file={@selected_file}
+        file_content={@file_content}
+        diffs={@diffs}
       />
     </div>
     """
@@ -2476,7 +2473,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       <%!-- Sidebar tab bar --%>
       <div class="flex items-center gap-0.5 px-1.5 py-1 overflow-x-auto flex-shrink-0 border-b border-subtle">
         <button
-          :for={tab <- [:files, :diff, :terminal, :graph]}
+          :for={tab <- [:files, :diff, :graph]}
           phx-click="switch_tab"
           phx-value-tab={tab}
           class={"relative flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium rounded-md transition-all duration-200 interactive " <>
@@ -2624,7 +2621,11 @@ defmodule LoomkinWeb.WorkspaceLive do
           {render_ghost_cards(assigns)}
 
           <%= if @worker_card_names != [] do %>
-            <div class={["grid gap-3", card_grid_cols(length(@worker_card_names))]}>
+            <div class={[
+              "grid gap-3",
+              card_grid_cols(length(@worker_card_names)),
+              any_agents_active?(@agent_cards, @worker_card_names) && "grid-alive"
+            ]}>
               <.live_component
                 :for={name <- @worker_card_names}
                 module={LoomkinWeb.AgentCardComponent}
@@ -2672,29 +2673,15 @@ defmodule LoomkinWeb.WorkspaceLive do
       />
     </div>
 
-    <%!-- Right: Context Inspector (w-80, collapsible) --%>
+    <%!-- Right: Agent Deep-Focus Panel (w-80, collapsible) --%>
     <.live_component
       module={LoomkinWeb.ContextInspectorComponent}
       id="context-inspector"
-      active_inspector_tab={@active_inspector_tab}
       focused_agent={@focused_agent}
+      focused_card={@focused_card}
       inspector_mode={@inspector_mode}
-      file_tree_version={@file_tree_version}
-      selected_file={@selected_file}
-      file_content={@file_content}
-      diffs={@diffs}
-      shell_commands={@shell_commands}
-      messages={@messages}
-      status={@status}
-      current_tool={@current_tool}
-      streaming={@streaming}
-      streaming_content={@streaming_content}
-      architect_phase={@architect_phase}
-      plan_steps={@plan_steps}
-      current_step={@current_step}
       session_id={@session_id}
       team_id={@active_team_id}
-      project_path={@explorer_path}
     />
     """
   end
@@ -2702,6 +2689,13 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp card_grid_cols(n) when n <= 1, do: "grid-cols-1"
   defp card_grid_cols(n) when n <= 4, do: "grid-cols-2"
   defp card_grid_cols(_), do: "grid-cols-3"
+
+  defp any_agents_active?(agent_cards, card_names) do
+    Enum.any?(card_names, fn name ->
+      card = agent_cards[name]
+      card && card.content_type in [:thinking, :tool_call, :streaming]
+    end)
+  end
 
   defp render_ghost_cards(assigns) do
     active_names = Enum.map(assigns.cached_agents, & &1.name)
@@ -3096,19 +3090,6 @@ defmodule LoomkinWeb.WorkspaceLive do
     end)
   end
 
-  defp status_badge_class(:idle), do: "badge-success flex items-center gap-1.5"
-  defp status_badge_class(:thinking), do: "badge flex items-center gap-1.5"
-  defp status_badge_class(:executing_tool), do: "badge flex items-center gap-1.5"
-  defp status_badge_class(_), do: "badge flex items-center gap-1.5"
-
-  defp status_dot_class(:idle), do: "w-1.5 h-1.5 rounded-full bg-emerald-400 status-dot-idle"
-
-  defp status_dot_class(:thinking),
-    do: "w-1.5 h-1.5 rounded-full bg-violet-400 status-dot-thinking"
-
-  defp status_dot_class(:executing_tool), do: "w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"
-  defp status_dot_class(_), do: "w-1.5 h-1.5 rounded-full bg-zinc-500"
-
   defp status_label(:idle, _tool), do: "Ready"
   defp status_label(:thinking, _tool), do: "Thinking..."
   defp status_label(:executing_tool, nil), do: "Running tool..."
@@ -3121,9 +3102,6 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp tab_icon(:diff),
     do: raw("<span class=\"hero-code-bracket-mini inline-block w-3.5 h-3.5\"></span>")
 
-  defp tab_icon(:terminal),
-    do: raw("<span class=\"hero-command-line-mini inline-block w-3.5 h-3.5\"></span>")
-
   defp tab_icon(:graph),
     do: raw("<span class=\"hero-share-mini inline-block w-3.5 h-3.5\"></span>")
 
@@ -3132,7 +3110,6 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   defp tab_label(:files), do: "Files"
   defp tab_label(:diff), do: "Diff"
-  defp tab_label(:terminal), do: "Terminal"
   defp tab_label(:graph), do: "Graph"
   defp tab_label(:team), do: "Kin"
 
@@ -3179,16 +3156,6 @@ defmodule LoomkinWeb.WorkspaceLive do
       module={LoomkinWeb.DiffComponent}
       id="diff-viewer"
       diffs={@diffs}
-    />
-    """
-  end
-
-  defp render_tab(:terminal, assigns) do
-    ~H"""
-    <.live_component
-      module={LoomkinWeb.TerminalComponent}
-      id="terminal"
-      commands={@shell_commands}
     />
     """
   end
@@ -4375,30 +4342,12 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   # --- Auto-follow logic for mission control ---
 
-  defp maybe_auto_follow(socket, agent_name, payload) do
+  defp maybe_auto_follow(socket, agent_name, _payload) do
     agent = if is_binary(agent_name), do: agent_name, else: nil
 
-    if socket.assigns.mode == :mission_control && socket.assigns.inspector_mode == :auto_follow do
-      case payload[:tool_name] do
-        name when name in ["file_read", "content_search", "file_search"] ->
-          assign(socket,
-            active_inspector_tab: :files,
-            focused_agent: agent,
-            selected_file: payload[:path]
-          )
-
-        name when name in ["file_write", "file_edit"] ->
-          assign(socket, active_inspector_tab: :diff, focused_agent: agent)
-
-        "shell" ->
-          assign(socket, active_inspector_tab: :terminal, focused_agent: agent)
-
-        "decision_log" ->
-          assign(socket, active_inspector_tab: :graph, focused_agent: agent)
-
-        _ ->
-          if agent, do: assign(socket, focused_agent: agent), else: socket
-      end
+    if socket.assigns.mode == :mission_control && socket.assigns.inspector_mode == :auto_follow &&
+         agent do
+      assign(socket, focused_agent: agent)
     else
       socket
     end
@@ -4615,21 +4564,6 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp format_llm_error(reason) when is_binary(reason), do: reason
   defp format_llm_error(reason), do: inspect(reason)
 
-  defp parse_shell_result(result) when is_binary(result) do
-    case String.split(result, "\n", parts: 2) do
-      ["Exit code: " <> code_str, output] ->
-        exit_code = String.to_integer(String.trim(code_str))
-        %{command: "(shell)", exit_code: exit_code, output: output}
-
-      _ ->
-        %{command: "(shell)", exit_code: 0, output: result}
-    end
-  end
-
-  defp parse_shell_result(_result) do
-    %{command: "(shell)", exit_code: 0, output: ""}
-  end
-
   # Map file extensions to highlight.js language names
   defp language_from_path(nil), do: "plaintext"
 
@@ -4759,7 +4693,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       end)
 
     tabs =
-      Enum.map([:files, :diff, :terminal, :graph], fn tab ->
+      Enum.map([:files, :diff, :graph], fn tab ->
         %{
           type: :tab,
           label: Atom.to_string(tab),
@@ -4901,39 +4835,6 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp palette_icon_class(:sub_tab), do: "w-2 h-2 rounded-sm bg-emerald-400"
   defp palette_icon_class(:action), do: "w-2 h-2 rounded-full bg-amber-400"
   defp palette_icon_class(_), do: "w-2 h-2 rounded-full bg-gray-400"
-
-  # --- Channel binding helpers ---
-
-  defp render_header_channel_badges(assigns) do
-    telegram = Enum.count(assigns.channel_bindings, &(&1.channel == :telegram))
-    discord = Enum.count(assigns.channel_bindings, &(&1.channel == :discord))
-
-    assigns =
-      assigns
-      |> assign(:telegram_count, telegram)
-      |> assign(:discord_count, discord)
-
-    ~H"""
-    <span
-      :if={@telegram_count > 0}
-      class="inline-flex items-center gap-0.5 text-[10px] text-sky-400 bg-sky-400/10 px-1.5 py-0.5 rounded-full"
-      title={"#{@telegram_count} Telegram"}
-    >
-      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z" />
-      </svg>
-    </span>
-    <span
-      :if={@discord_count > 0}
-      class="inline-flex items-center gap-0.5 text-[10px] text-indigo-400 bg-indigo-400/10 px-1.5 py-0.5 rounded-full"
-      title={"#{@discord_count} Discord"}
-    >
-      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
-      </svg>
-    </span>
-    """
-  end
 
   defp load_channel_bindings(nil), do: []
 
