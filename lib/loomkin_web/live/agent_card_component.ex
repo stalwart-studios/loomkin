@@ -80,31 +80,53 @@ defmodule LoomkinWeb.AgentCardComponent do
       phx-click="focus_card_agent"
       phx-value-agent={@card.name}
       class={[
-        "group relative animate-fade-in flex flex-col card-grain overflow-hidden",
+        "group relative animate-fade-in flex flex-row overflow-hidden kin-card",
         if(@focused,
           do: "card-brand card-focused-glow h-full rounded-lg",
-          else: "min-h-[140px] cursor-pointer card-elevated hover-lift rounded-lg"
+          else: "min-h-[140px] cursor-pointer kin-card-idle rounded-lg"
         ),
         card_state_class(@card.content_type, @card.status)
       ]}
       style={card_style(@card.content_type, @card.last_tool, @agent_color, @focused)}
     >
-      <%!-- Top accent line — agent identity color --%>
+      <%!-- Left accent bar — agent identity --%>
       <div
         :if={!@focused}
-        class="h-[2px] w-full flex-shrink-0"
-        style={"background: linear-gradient(90deg, #{@agent_color}, #{@agent_color}40);"}
+        class="w-[3px] flex-shrink-0 kin-accent-bar"
+        style={"background: #{@agent_color};"}
       />
 
-      <div class="p-4 flex flex-col flex-1 min-h-0">
+      <%!-- Ambient color wash --%>
+      <div
+        class="absolute inset-0 pointer-events-none"
+        style={"background: radial-gradient(ellipse at 0% 0%, #{@agent_color}08 0%, transparent 60%);"}
+      />
+
+      <div class="relative flex flex-col flex-1 min-h-0 min-w-0 p-4">
+        <%!-- Corner notch decoration --%>
+        <div
+          :if={!@focused}
+          class="absolute top-0 right-0 w-3 h-3"
+          style="background: linear-gradient(225deg, var(--surface-0) 50%, transparent 50%); opacity: 0.6;"
+        />
+
         <%!-- Question overlay --%>
         <div
           :if={@card.pending_question}
-          class="absolute inset-0 z-10 rounded-lg bg-gradient-to-br from-violet-900/30 to-purple-900/20 border border-violet-500/30 p-4 flex flex-col overflow-auto"
+          class="absolute inset-0 z-10 rounded-lg p-4 flex flex-col overflow-auto"
+          style={"background: linear-gradient(135deg, #{@agent_color}18, #{@agent_color}08); border: 1px solid #{@agent_color}30;"}
         >
           <div class="flex items-center gap-2 mb-3">
-            <div class="w-6 h-6 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0">
-              <svg class="w-3.5 h-3.5 text-violet-400" viewBox="0 0 20 20" fill="currentColor">
+            <div
+              class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
+              style={"background: #{@agent_color}20;"}
+            >
+              <svg
+                class="w-3.5 h-3.5"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                style={"color: #{@agent_color};"}
+              >
                 <path
                   fill-rule="evenodd"
                   d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
@@ -112,8 +134,8 @@ defmodule LoomkinWeb.AgentCardComponent do
                 />
               </svg>
             </div>
-            <p class="text-xs font-semibold text-violet-300 truncate">
-              {@card.pending_question.agent_name} needs your input
+            <p class="text-xs font-semibold truncate" style={"color: #{@agent_color};"}>
+              {@card.pending_question.agent_name} needs input
             </p>
           </div>
 
@@ -127,7 +149,8 @@ defmodule LoomkinWeb.AgentCardComponent do
               phx-click="ask_user_answer"
               phx-value-question-id={@card.pending_question.question_id}
               phx-value-answer={option}
-              class="px-3 py-1.5 text-xs font-medium text-violet-300 bg-violet-500/10 hover:bg-violet-500/25 border border-violet-500/30 hover:border-violet-400/50 rounded-lg transition-all duration-200 cursor-pointer"
+              class="px-3 py-1.5 text-xs font-medium rounded transition-all duration-200 cursor-pointer"
+              style={"color: #{@agent_color}; background: #{@agent_color}10; border: 1px solid #{@agent_color}30;"}
             >
               {option}
             </button>
@@ -135,22 +158,15 @@ defmodule LoomkinWeb.AgentCardComponent do
               phx-click="ask_user_answer"
               phx-value-question-id={@card.pending_question.question_id}
               phx-value-answer="__collective__"
-              class="px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 hover:border-amber-400/50 rounded-lg transition-all duration-200 cursor-pointer"
+              class="px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded transition-all duration-200 cursor-pointer"
             >
-              Let the collective decide
+              Collective
             </button>
           </div>
         </div>
 
-        <%!-- Header: avatar, name, role, action buttons --%>
-        <div class="flex items-center gap-2.5">
-          <%!-- Agent avatar — colored initial --%>
-          <div
-            class="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 text-[11px] font-bold"
-            style={"background: #{@agent_color}18; color: #{@agent_color};"}
-          >
-            {agent_initial(@card.name)}
-          </div>
+        <%!-- Header --%>
+        <div class="flex items-start gap-2.5">
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5">
               <span class={[
@@ -158,21 +174,29 @@ defmodule LoomkinWeb.AgentCardComponent do
                 status_dot_class(@card.status)
               ]} />
               <span
-                class="text-[13px] font-semibold truncate"
+                class="text-[13px] font-semibold truncate tracking-tight"
                 style={"color: #{@agent_color};"}
               >
                 {@card.name}
               </span>
             </div>
-            <span class="text-[10px] text-muted leading-none">
-              {format_role(@card.role)}
-              <span :if={@model} class="font-mono opacity-50 ml-1">
+            <div class="flex items-center gap-1.5 mt-0.5">
+              <span
+                class="text-[9px] font-mono uppercase tracking-widest"
+                style={"color: #{@agent_color}60;"}
+              >
+                {format_role(@card.role)}
+              </span>
+              <span
+                :if={@model}
+                class="text-[9px] font-mono text-muted opacity-40 truncate max-w-[80px]"
+              >
                 {format_model(@model)}
               </span>
-            </span>
+            </div>
           </div>
 
-          <%!-- Action buttons (visible on hover) --%>
+          <%!-- Action buttons --%>
           <div
             class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100"
             style="transition: opacity var(--transition-base);"
@@ -182,7 +206,7 @@ defmodule LoomkinWeb.AgentCardComponent do
               phx-value-agent={@card.name}
               phx-value-team-id={@team_id}
               title={"Reply to #{@card.name}"}
-              class="text-muted hover:text-brand p-1 rounded-md hover:bg-surface-3 flex-shrink-0"
+              class="text-muted hover:text-brand p-1 rounded hover:bg-surface-3 flex-shrink-0"
               style="transition: color var(--transition-base), background var(--transition-base);"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -199,7 +223,7 @@ defmodule LoomkinWeb.AgentCardComponent do
               phx-value-agent={@card.name}
               phx-value-team-id={@team_id}
               title={"Pause #{@card.name}"}
-              class="text-muted hover:text-amber-400 p-1 rounded-md hover:bg-surface-3 flex-shrink-0"
+              class="text-muted hover:text-amber-400 p-1 rounded hover:bg-surface-3 flex-shrink-0"
               style="transition: color var(--transition-base), background var(--transition-base);"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -216,7 +240,7 @@ defmodule LoomkinWeb.AgentCardComponent do
               phx-value-agent={@card.name}
               phx-value-team-id={@team_id}
               title={"Resume #{@card.name}"}
-              class="text-muted hover:text-green-400 p-1 rounded-md hover:bg-surface-3 flex-shrink-0"
+              class="text-muted hover:text-green-400 p-1 rounded hover:bg-surface-3 flex-shrink-0"
               style="transition: color var(--transition-base), background var(--transition-base);"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -233,7 +257,7 @@ defmodule LoomkinWeb.AgentCardComponent do
               phx-value-agent={@card.name}
               phx-value-team-id={@team_id}
               title={"Steer #{@card.name}"}
-              class="text-muted hover:text-brand p-1 rounded-md hover:bg-surface-3 flex-shrink-0"
+              class="text-muted hover:text-brand p-1 rounded hover:bg-surface-3 flex-shrink-0"
               style="transition: color var(--transition-base), background var(--transition-base);"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -256,20 +280,20 @@ defmodule LoomkinWeb.AgentCardComponent do
             <% :thinking -> %>
               <div
                 class={[
-                  "text-xs leading-relaxed agent-card-content rounded-md px-2.5 py-2",
+                  "text-xs leading-relaxed agent-card-content kin-thought-well",
                   !@focused && "line-clamp-4"
                 ]}
-                style={"color: var(--text-secondary); background: #{@agent_color}06;"}
+                style={"color: var(--text-secondary); --kin-color: #{@agent_color};"}
               >
                 {@rendered_content}
               </div>
             <% :last_thinking -> %>
               <div
                 class={[
-                  "text-xs leading-relaxed opacity-40 agent-card-content",
+                  "text-xs leading-relaxed opacity-30 agent-card-content pl-2",
                   !@focused && "line-clamp-3"
                 ]}
-                style="color: var(--text-secondary);"
+                style={"color: var(--text-muted); border-left: 1px solid #{@agent_color}15;"}
               >
                 {@rendered_content}
               </div>
@@ -285,58 +309,48 @@ defmodule LoomkinWeb.AgentCardComponent do
               </div>
             <% _ -> %>
               <%= if @card.status == :complete do %>
-                <div class="flex items-center gap-1.5 text-xs text-emerald-400/80">
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                    <path
-                      fill-rule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                  <span>Done</span>
+                <div class="flex items-center gap-2 text-xs">
+                  <div class="h-px flex-1" style={"background: #{@agent_color}15;"} />
+                  <span style={"color: #{@agent_color}80;"}>complete</span>
+                  <div class="h-px flex-1" style={"background: #{@agent_color}15;"} />
                 </div>
               <% else %>
-                <div class="flex items-center gap-1.5 text-xs text-muted">
-                  <span
-                    class="w-1 h-1 rounded-full flex-shrink-0"
-                    style={"background: #{@agent_color}40;"}
-                  />
-                  <span class="italic">Waiting</span>
+                <div class="flex items-center gap-2 text-[10px] text-muted font-mono">
+                  <span class="kin-idle-blink" style={"color: #{@agent_color}40;"}>_</span>
+                  <span class="opacity-40">standby</span>
                 </div>
               <% end %>
           <% end %>
 
-          <%!-- Last tool --%>
+          <%!-- Last tool readout --%>
           <div
             :if={@card.last_tool}
-            class="mt-2 flex items-center gap-1.5 px-2 py-1 rounded-md"
-            style="background: var(--surface-3);"
+            class="mt-2 flex items-center gap-1.5 font-mono"
           >
             <span
-              class="text-[10px]"
-              style={"color: #{tool_config(@card.last_tool.name).color}"}
+              class="text-[9px] flex-shrink-0"
+              style={"color: #{tool_config(@card.last_tool.name).color};"}
             >
               {tool_config(@card.last_tool.name).icon}
             </span>
-            <span class="text-[10px] font-mono truncate text-muted">
+            <span class="text-[9px] truncate text-muted opacity-50">
               {@card.last_tool.target || @card.last_tool.name}
             </span>
           </div>
         </div>
 
-        <%!-- Footer: current task --%>
+        <%!-- Footer: task readout --%>
         <div
           :if={@card.current_task}
-          class="mt-2 pt-2 flex items-center gap-2"
-          style={"border-top: 1px solid #{@agent_color}12;"}
+          class="mt-auto pt-2 flex items-center gap-2 font-mono"
         >
           <span
-            class="text-[10px] uppercase tracking-wide flex-shrink-0 font-medium"
-            style={"color: #{@agent_color}80;"}
+            class="text-[8px] uppercase tracking-[0.15em] flex-shrink-0 font-semibold"
+            style={"color: #{@agent_color}50;"}
           >
-            Task
+            tsk
           </span>
-          <span class="text-[11px] truncate flex-1 font-mono text-secondary">
+          <span class="text-[10px] truncate flex-1 text-muted">
             {@card.current_task}
           </span>
         </div>
@@ -368,14 +382,6 @@ defmodule LoomkinWeb.AgentCardComponent do
   defp card_style(_content_type, _last_tool, agent_color, _focused) do
     "background: linear-gradient(145deg, var(--surface-2), var(--surface-3)); border-color: #{agent_color}15;"
   end
-
-  # --- Agent identity helpers ---
-
-  defp agent_initial(name) when is_binary(name) do
-    name |> String.trim() |> String.first() |> String.upcase()
-  end
-
-  defp agent_initial(_), do: "?"
 
   # --- Status helpers ---
 

@@ -723,6 +723,55 @@ body {
   z-index: 1;
 }
 
+/* ── Kin Card — bespoke agent identity ── */
+
+.kin-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  transition: border-color var(--transition-base),
+              box-shadow var(--transition-base),
+              transform var(--transition-base);
+}
+
+.kin-card-idle {
+  box-shadow: var(--shadow-sm);
+}
+.kin-card-idle:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  filter: brightness(1.06);
+}
+
+/* Left accent bar glow when active */
+.kin-accent-bar {
+  transition: box-shadow var(--transition-base), opacity var(--transition-base);
+}
+.card-breathing .kin-accent-bar,
+.card-tool-active .kin-accent-bar,
+.card-streaming .kin-accent-bar {
+  box-shadow: 2px 0 12px currentColor;
+}
+.card-idle .kin-accent-bar {
+  opacity: 0.4;
+}
+
+/* Thought well — left-bordered content area for active thinking */
+.kin-thought-well {
+  padding: 0.5rem 0.625rem;
+  border-left: 2px solid var(--kin-color, var(--border-brand));
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(90deg, rgba(255,255,255,0.015), transparent 60%);
+}
+
+/* Idle cursor blink */
+.kin-idle-blink {
+  animation: kin-blink 1.2s step-end infinite;
+}
+@keyframes kin-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 /* Grid ambient energy when agents are active */
 .grid-alive {
   background: radial-gradient(ellipse at center, rgba(124, 58, 237, 0.02) 0%, transparent 70%);

@@ -2671,9 +2671,7 @@ defmodule LoomkinWeb.WorkspaceLive do
     """
   end
 
-  defp card_grid_cols(n) when n <= 1, do: "grid-cols-1"
-  defp card_grid_cols(n) when n <= 4, do: "grid-cols-2"
-  defp card_grid_cols(_), do: "grid-cols-3"
+  defp card_grid_cols(_), do: "grid-cols-2 lg:grid-cols-3"
 
   defp any_agents_active?(agent_cards, card_names) do
     Enum.any?(card_names, fn name ->
