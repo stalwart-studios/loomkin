@@ -40,7 +40,9 @@ defmodule Loomkin.Teams.TeamBroadcaster do
                     "collaboration.peer.message",
                     "agent.crashed",
                     "agent.recovered",
-                    "agent.permanently_failed"
+                    "agent.permanently_failed",
+                    "agent.approval.requested",
+                    "agent.approval.resolved"
                   ])
 
   defstruct team_ids: MapSet.new(),

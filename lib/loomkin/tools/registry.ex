@@ -24,7 +24,8 @@ defmodule Loomkin.Tools.Registry do
     Loomkin.Tools.PeerAnswerQuestion,
     Loomkin.Tools.PeerForwardQuestion,
     Loomkin.Tools.CollectiveDecision,
-    Loomkin.Tools.AskUser
+    Loomkin.Tools.AskUser,
+    Loomkin.Tools.RequestApproval
   ]
 
   @lead_tools [
@@ -107,6 +108,7 @@ defmodule Loomkin.Tools.Registry do
     query_id answer enrichment to new_role require_approval
     start_line end_line diff task scope severity task_id result name role count
     options
+    gate_id gate_context
   )a
 
   @known_param_key_map Map.new(@known_param_keys, fn atom -> {Atom.to_string(atom), atom} end)
