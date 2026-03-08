@@ -84,7 +84,7 @@ defmodule LoomkinWeb.WorkspaceLive do
         # File explorer drawer
         file_drawer_open: false,
         # Broadcast mode: true in team sessions, false in solo
-        broadcast_mode: true
+        broadcast_mode: params["team_id"] != nil
       )
       |> stream(:comms_events, [], limit: -500)
 
@@ -172,7 +172,8 @@ defmodule LoomkinWeb.WorkspaceLive do
           team_id: team_id_from_session,
           active_team_id: team_id_from_session,
           mode: :mission_control,
-          channel_bindings: bindings
+          channel_bindings: bindings,
+          broadcast_mode: true
         )
       else
         socket
