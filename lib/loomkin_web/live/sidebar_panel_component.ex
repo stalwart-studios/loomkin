@@ -11,7 +11,12 @@ defmodule LoomkinWeb.SidebarPanelComponent do
 
   @impl true
   def update(assigns, socket) do
-    {:ok, assign(socket, assigns)}
+    socket =
+      socket
+      |> assign(assigns)
+      |> assign_new(:graph_sub_tab, fn -> :tasks end)
+
+    {:ok, socket}
   end
 
   @impl true
@@ -62,6 +67,11 @@ defmodule LoomkinWeb.SidebarPanelComponent do
   def handle_event("switch_tab", %{"tab" => tab}, socket) do
     send(self(), {:sidebar_event, "switch_tab", %{"tab" => tab}})
     {:noreply, socket}
+  end
+
+  def handle_event("graph_sub_tab", %{"tab" => tab}, socket) do
+    sub_tab = String.to_existing_atom(tab)
+    {:noreply, assign(socket, graph_sub_tab: sub_tab)}
   end
 
   def handle_event("deselect_file", _params, socket) do
@@ -148,6 +158,44 @@ defmodule LoomkinWeb.SidebarPanelComponent do
   end
 
   defp render_tab(:graph, assigns) do
+    ~H"""
+    <div class="flex flex-col h-full">
+      <div class="flex items-center gap-1 px-2 py-1.5 border-b border-subtle flex-shrink-0">
+        <button
+          :for={sub <- [:tasks, :decisions]}
+          phx-click="graph_sub_tab"
+          phx-value-tab={sub}
+          phx-target={@myself}
+          class={"px-2 py-1 text-[10px] font-medium rounded transition-colors duration-150 " <>
+            if(@graph_sub_tab == sub,
+              do: "text-brand bg-brand/10",
+              else: "text-muted hover:text-gray-300")}
+        >
+          {graph_sub_tab_label(sub)}
+        </button>
+      </div>
+      <div class="flex-1 overflow-auto">
+        {render_graph_sub_tab(@graph_sub_tab, assigns)}
+      </div>
+    </div>
+    """
+  end
+
+  defp graph_sub_tab_label(:tasks), do: "Tasks"
+  defp graph_sub_tab_label(:decisions), do: "Decisions"
+
+  defp render_graph_sub_tab(:tasks, assigns) do
+    ~H"""
+    <.live_component
+      module={LoomkinWeb.TaskGraphComponent}
+      id="task-graph"
+      session_id={@session_id}
+      team_id={@active_team_id}
+    />
+    """
+  end
+
+  defp render_graph_sub_tab(:decisions, assigns) do
     ~H"""
     <.live_component
       module={LoomkinWeb.DecisionGraphComponent}

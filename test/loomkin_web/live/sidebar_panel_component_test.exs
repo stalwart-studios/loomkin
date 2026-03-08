@@ -46,8 +46,28 @@ defmodule LoomkinWeb.SidebarPanelComponentTest do
     html =
       render_component(LoomkinWeb.SidebarPanelComponent, %{@base_assigns | active_tab: :graph})
 
-    # DecisionGraphComponent renders a Decision Graph header
-    assert html =~ "Decision Graph"
+    # Graph tab has sub-tabs for Tasks and Decisions
+    assert html =~ "Tasks"
+    assert html =~ "Decisions"
+  end
+
+  test "graph tab defaults to tasks sub-tab" do
+    html =
+      render_component(LoomkinWeb.SidebarPanelComponent, %{@base_assigns | active_tab: :graph})
+
+    # TaskGraphComponent renders a Task Graph header by default
+    assert html =~ "Task Graph"
+  end
+
+  test "graph tab shows decisions sub-tab when selected" do
+    html =
+      render_component(LoomkinWeb.SidebarPanelComponent, %{
+        @base_assigns
+        | active_tab: :graph
+      })
+
+    # Default sub-tab shows Tasks; Decisions sub-tab button is present
+    assert html =~ "graph_sub_tab"
   end
 
   test "shows file preview when selected_file is set" do

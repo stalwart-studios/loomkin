@@ -155,6 +155,24 @@ defmodule Loomkin.Teams.Tasks do
     )
   end
 
+  @doc "Returns {tasks, deps} tuple with all tasks and their dependency records for a team."
+  def list_with_deps(team_id) do
+    tasks = list_all(team_id)
+    task_ids = Enum.map(tasks, & &1.id)
+
+    deps =
+      if task_ids == [] do
+        []
+      else
+        Repo.all(
+          from d in TeamTaskDep,
+            where: d.task_id in ^task_ids or d.depends_on_id in ^task_ids
+        )
+      end
+
+    {tasks, deps}
+  end
+
   @doc "List tasks from sibling teams for cross-team visibility."
   def list_cross_team_tasks(team_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
