@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-03-08T02:09:32.944Z"
-last_activity: 2026-03-08 — Completed 04-02 task dependency graph (TaskGraphComponent SVG DAG, sub-tab routing)
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-03-08T02:25:00.000Z"
+last_activity: 2026-03-08 — Completed 04-03 crash recovery ui wiring (agent card crash states, comms events, signal handlers)
 progress:
   total_phases: 10
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 15
-  completed_plans: 14
+  completed_plans: 15
   percent: 29
 ---
 
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-07)
 
 ## Current Position
 
-Phase: 4 of 10 (Task Graph & Crash Recovery) - IN PROGRESS
-Plan: 2 of 3 in current phase (COMPLETE)
-Status: Completed 04-02 task dependency graph
-Last activity: 2026-03-08 — Completed 04-02 task dependency graph (TaskGraphComponent SVG DAG, sub-tab routing)
+Phase: 4 of 10 (Task Graph & Crash Recovery) - COMPLETE
+Plan: 3 of 3 in current phase (COMPLETE)
+Status: Completed 04-03 crash recovery ui wiring
+Last activity: 2026-03-08 — Completed 04-03 crash recovery ui wiring (agent card crash states, comms events, signal handlers)
 
-Progress: [##░░░░░░░░] 29%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [##░░░░░░░░] 29%
 | Phase 03-live-comms-feed P02 | 8 | 3 tasks | 6 files |
 | Phase 04-task-graph-crash-recovery P01 | 5 | 2 tasks | 5 files |
 | Phase 04 P02 | 5 | 2 tasks | 5 files |
+| Phase 04 P03 | 8 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,8 @@ Recent decisions affecting current work:
 - [Phase 04-01]: Crash count tracked per {team_id, agent_name} key across watcher lifetime for monotonic increment
 - [Phase 04-01]: Agent :DOWN handler sets :error on abnormal exits, :idle on normal/shutdown
 - [Phase 04]: Used tasks_override/deps_override assigns for component testing without DB queries
+- [Phase 04-03]: Reuse card-error class for all crash states (crashed, recovering, permanently_failed)
+- [Phase 04-03]: 2-second Process.send_after delay for recovering->idle transition
 
 ### Pending Todos
 
@@ -110,6 +113,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-08T02:09:32.186Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-03-08T02:25:00Z
+Stopped at: Completed 04-03-PLAN.md
 Resume file: None
