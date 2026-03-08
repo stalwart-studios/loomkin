@@ -117,61 +117,6 @@ defmodule LoomkinWeb.AgentCardComponent do
           style="background: linear-gradient(225deg, var(--surface-0) 50%, transparent 50%); opacity: 0.6;"
         />
 
-        <%!-- Question overlay --%>
-        <div
-          :if={@card.pending_question}
-          class="absolute inset-0 z-10 rounded-lg p-4 flex flex-col overflow-auto"
-          style={"background: linear-gradient(135deg, #{@agent_color}18, #{@agent_color}08); border: 1px solid #{@agent_color}30;"}
-        >
-          <div class="flex items-center gap-2 mb-3">
-            <div
-              class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
-              style={"background: #{@agent_color}20;"}
-            >
-              <svg
-                class="w-3.5 h-3.5"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                style={"color: #{@agent_color};"}
-              >
-                <path
-                  fill-rule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
-                  clip-rule="evenodd"
-                />
-              </svg>
-            </div>
-            <p class="text-xs font-semibold truncate" style={"color: #{@agent_color};"}>
-              {@card.pending_question.agent_name} needs input
-            </p>
-          </div>
-
-          <p class="text-sm text-gray-200 mb-3 leading-relaxed line-clamp-2">
-            {@card.pending_question.question}
-          </p>
-
-          <div class="flex flex-wrap gap-1.5 mt-auto">
-            <button
-              :for={option <- @card.pending_question.options}
-              phx-click="ask_user_answer"
-              phx-value-question-id={@card.pending_question.question_id}
-              phx-value-answer={option}
-              class="px-3 py-1.5 text-xs font-medium rounded transition-all duration-200 cursor-pointer"
-              style={"color: #{@agent_color}; background: #{@agent_color}10; border: 1px solid #{@agent_color}30;"}
-            >
-              {option}
-            </button>
-            <button
-              phx-click="ask_user_answer"
-              phx-value-question-id={@card.pending_question.question_id}
-              phx-value-answer="__collective__"
-              class="px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded transition-all duration-200 cursor-pointer"
-            >
-              Collective
-            </button>
-          </div>
-        </div>
-
         <%!-- Header --%>
         <div class="flex items-start gap-2.5">
           <div class="min-w-0 flex-1">
@@ -493,6 +438,43 @@ defmodule LoomkinWeb.AgentCardComponent do
           </button>
         </form>
       </div>
+
+      <%!-- AskUser panel — visible when status is :ask_user_pending and pending_questions is non-empty --%>
+      <div
+        :if={
+          @card.status == :ask_user_pending &&
+            @card[:pending_questions] != nil &&
+            @card[:pending_questions] != []
+        }
+        class="border-t border-cyan-500/30 bg-cyan-950/20 px-4 py-3 flex flex-col gap-3"
+      >
+        <span class="text-[11px] font-semibold text-cyan-400">Question for you</span>
+
+        <%!-- Sequential question list --%>
+        <div :for={q <- @card[:pending_questions] || []} class="flex flex-col gap-1.5">
+          <p class="text-xs text-zinc-300 leading-relaxed">{q.question}</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              :for={option <- q.options}
+              phx-click="ask_user_answer"
+              phx-value-question-id={q.question_id}
+              phx-value-answer={option}
+              class="px-3 py-1.5 text-[11px] font-medium rounded bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-200 border border-cyan-500/30 transition-colors cursor-pointer"
+            >
+              {option}
+            </button>
+          </div>
+        </div>
+
+        <%!-- Single "Let the team decide" for the whole batch --%>
+        <button
+          phx-click="let_team_decide"
+          phx-value-agent={@card.name}
+          class="self-start px-3 py-1.5 text-[11px] font-medium rounded bg-zinc-700/60 hover:bg-zinc-600/60 text-zinc-300 border border-zinc-600/30 transition-colors cursor-pointer"
+        >
+          Let the team decide
+        </button>
+      </div>
     </div>
     """
   end
@@ -505,6 +487,7 @@ defmodule LoomkinWeb.AgentCardComponent do
   defp card_state_class(_content_type, :paused), do: "agent-card-paused"
   defp card_state_class(_content_type, :blocked), do: "agent-card-blocked"
   defp card_state_class(_content_type, :approval_pending), do: "agent-card-approval"
+  defp card_state_class(_content_type, :ask_user_pending), do: "agent-card-asking"
   defp card_state_class(_content_type, :error), do: "card-error"
   defp card_state_class(_content_type, :crashed), do: "card-error"
   defp card_state_class(_content_type, :recovering), do: "card-error"
@@ -534,6 +517,7 @@ defmodule LoomkinWeb.AgentCardComponent do
   defp status_dot_class(:error), do: "bg-red-400 agent-dot-error"
   defp status_dot_class(:waiting_permission), do: "bg-amber-400 agent-dot-thinking"
   defp status_dot_class(:approval_pending), do: "bg-violet-500 animate-pulse"
+  defp status_dot_class(:ask_user_pending), do: "bg-cyan-500 animate-pulse"
   defp status_dot_class(:complete), do: "bg-emerald-400"
   defp status_dot_class(:crashed), do: "bg-red-500 animate-pulse"
   defp status_dot_class(:recovering), do: "bg-amber-400 animate-pulse"
@@ -547,6 +531,7 @@ defmodule LoomkinWeb.AgentCardComponent do
   defp status_label(:error), do: "Error"
   defp status_label(:waiting_permission), do: "Waiting for permission"
   defp status_label(:approval_pending), do: "Awaiting approval"
+  defp status_label(:ask_user_pending), do: "Waiting for you"
   defp status_label(:complete), do: "Complete"
   defp status_label(:crashed), do: "Crashed"
   defp status_label(:recovering), do: "Recovering"
@@ -666,4 +651,17 @@ defmodule LoomkinWeb.AgentCardComponent do
   end
 
   defp hex_to_rgba(color, _alpha), do: color
+
+  # --- Test delegates for private helper functions ---
+  # These thin wrappers allow unit tests to verify private logic
+  # without live view rendering overhead.
+
+  @doc false
+  def status_dot_class_for_test(status), do: status_dot_class(status)
+
+  @doc false
+  def status_label_for_test(status), do: status_label(status)
+
+  @doc false
+  def card_state_class_for_test(content_type, status), do: card_state_class(content_type, status)
 end

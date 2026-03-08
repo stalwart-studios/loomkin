@@ -714,6 +714,26 @@ defmodule LoomkinWeb.WorkspaceLive do
     end
   end
 
+  def handle_event("let_team_decide", %{"agent" => agent_name}, socket) do
+    agent_questions =
+      Enum.filter(socket.assigns.pending_questions, &(&1.agent_name == agent_name))
+
+    # Call handle_collective_decision for each question, threading the socket
+    socket =
+      Enum.reduce(agent_questions, socket, fn q, acc_socket ->
+        handle_collective_decision(acc_socket, q)
+      end)
+
+    remaining = Enum.reject(socket.assigns.pending_questions, &(&1.agent_name == agent_name))
+
+    socket =
+      socket
+      |> assign(pending_questions: remaining)
+      |> update_agent_card(agent_name, %{pending_questions: []})
+
+    {:noreply, socket}
+  end
+
   # --- Approval Gate ---
 
   def handle_event(
@@ -2194,17 +2214,25 @@ defmodule LoomkinWeb.WorkspaceLive do
       metadata: %{question_id: question.question_id, options: question.options}
     }
 
+    # Build the updated pending_questions list for the agent card
+    card = get_in(socket.assigns.agent_cards, [question.agent_name]) || %{}
+    existing_card_questions = card[:pending_questions] || []
+
+    new_card_entry = %{
+      question_id: question.question_id,
+      question: question.question,
+      options: question.options,
+      agent_name: question.agent_name
+    }
+
+    updated_card_questions = existing_card_questions ++ [new_card_entry]
+
     socket =
       socket
       |> assign(pending_questions: questions)
       |> append_activity_event(event)
       |> update_agent_card(question.agent_name, %{
-        pending_question: %{
-          question_id: question.question_id,
-          question: question.question,
-          options: question.options,
-          agent_name: question.agent_name
-        }
+        pending_questions: updated_card_questions
       })
 
     {:noreply, socket}
@@ -2213,7 +2241,7 @@ defmodule LoomkinWeb.WorkspaceLive do
   def handle_info({:ask_user_answered, question_id, answer}, socket) do
     remaining = Enum.reject(socket.assigns.pending_questions, &(&1.question_id == question_id))
 
-    # Clear pending_question from the agent's card
+    # Clear pending_questions from the agent's card when this was the last question
     agent_name =
       Enum.find_value(socket.assigns.pending_questions, fn q ->
         if q.question_id == question_id, do: q.agent_name
@@ -2221,7 +2249,20 @@ defmodule LoomkinWeb.WorkspaceLive do
 
     socket =
       if agent_name do
-        update_agent_card(socket, agent_name, %{pending_question: nil})
+        agent_remaining = Enum.filter(remaining, &(&1.agent_name == agent_name))
+
+        card = get_in(socket.assigns.agent_cards, [agent_name]) || %{}
+
+        card_questions =
+          (card[:pending_questions] || []) |> Enum.reject(&(&1.question_id == question_id))
+
+        socket = update_agent_card(socket, agent_name, %{pending_questions: card_questions})
+
+        if agent_remaining == [] do
+          update_agent_card(socket, agent_name, %{pending_questions: []})
+        else
+          socket
+        end
       else
         socket
       end
@@ -3972,7 +4013,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       latest_content: nil,
       content_type: :idle,
       last_tool: nil,
-      pending_question: nil,
+      pending_questions: [],
       model: nil,
       budget_used: 0,
       budget_limit: 0,
