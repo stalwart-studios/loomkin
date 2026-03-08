@@ -162,7 +162,14 @@ Plans:
   3. Sub-teams at depth 2 (grandchild teams) also appear in the tree and their agents' peer messages appear in the comms feed
   4. If a leader agent crashes and OTP restarts it, the previously spawned child agents are terminated (not left running as ghosts) before the leader restarts
   5. The agent tree shows each team node with: team name, depth indicator, agent count, and parent relationship — all updated live as the tree changes
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — Wave 0: create 4 failing test stub files for tree behaviors
+- [ ] 08-02-PLAN.md — Signal schema extension, Manager publish, TeamBroadcaster critical type, TeamSpawn cleanup
+- [ ] 08-03-PLAN.md — Agent spawned_child_teams field, terminate/2 dissolution, on_tool_execute TeamSpawn intercept
+- [ ] 08-04-PLAN.md — workspace_live team_tree map migration, recursive subscription and dissolution walk
+- [ ] 08-05-PLAN.md — TeamTreeComponent popover, toolbar wiring, visual verification
 
 ### Phase 9: Spawn Safety
 **Goal**: Before a leader spawns an expensive sub-tree, a budget check and human approval gate run first — and the gate surfaces the estimated cost so the human can make an informed decision
