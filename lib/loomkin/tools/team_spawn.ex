@@ -94,19 +94,6 @@ defmodule Loomkin.Tools.TeamSpawn do
         end
       end)
 
-    # Notify parent team listeners (e.g. WorkspaceLive) so they subscribe to the sub-team
-    any_spawned = Enum.any?(spawn_results, &match?({:ok, _, _}, &1))
-
-    if parent_team_id && any_spawned do
-      signal =
-        Loomkin.Signals.Team.ChildTeamCreated.new!(%{
-          team_id: team_id,
-          parent_team_id: parent_team_id
-        })
-
-      Loomkin.Signals.publish(signal)
-    end
-
     lines =
       Enum.map(spawn_results, fn
         {:ok, name, role} -> "  - #{name} (#{role}): spawned"

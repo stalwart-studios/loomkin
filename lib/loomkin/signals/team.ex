@@ -44,7 +44,9 @@ defmodule Loomkin.Signals.Team do
       type: "team.child.created",
       schema: [
         team_id: [type: :string, required: true],
-        parent_team_id: [type: :string, required: false]
+        parent_team_id: [type: :string, required: false],
+        team_name: [type: :string, required: true],
+        depth: [type: :integer, required: true]
       ]
   end
 

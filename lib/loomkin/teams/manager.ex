@@ -3,6 +3,7 @@ defmodule Loomkin.Teams.Manager do
 
   alias Loomkin.Decisions.AutoLogger
   alias Loomkin.Decisions.Broadcaster
+  alias Loomkin.Signals.Team.ChildTeamCreated
   alias Loomkin.Teams.Comms
   alias Loomkin.Teams.ConflictDetector
   alias Loomkin.Teams.Distributed
@@ -94,6 +95,17 @@ defmodule Loomkin.Teams.Manager do
 
           # Start decision graph nervous system processes
           start_nervous_system(sub_team_id)
+
+          # Publish ChildTeamCreated so LiveView can render tree nodes from signal data
+          signal =
+            ChildTeamCreated.new!(%{
+              team_id: sub_team_id,
+              parent_team_id: parent_team_id,
+              team_name: name,
+              depth: parent_depth + 1
+            })
+
+          Loomkin.Signals.publish(signal)
 
           {:ok, sub_team_id}
         end
