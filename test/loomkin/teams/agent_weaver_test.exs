@@ -55,19 +55,27 @@ defmodule Loomkin.Teams.AgentWeaverTest do
   end
 
   describe "weaver auto-start" do
-    test "weaver triggers handle_continue(:auto_weave) on init" do
+    test "weaver triggers auto_weave after staggered delay on init" do
       team_id = unique_team_id()
 
       # Start a coder so the team is "active"
       _coder = start_agent(team_id: team_id, name: "coder-1", role: :coder)
 
-      # Start the weaver — it auto-starts via handle_continue(:auto_weave)
+      # Start the weaver — it schedules :weaver_cycle after a 3s delay
       weaver = start_agent(team_id: team_id, name: "weaver", role: :weaver)
 
       Process.sleep(200)
 
       state = :sys.get_state(weaver.pid)
-      # Weaver should have started a loop task and be in :working status
+      # Immediately after init, weaver should be idle (staggered start)
+      assert state.loop_task == nil
+      assert state.status == :idle
+
+      # Simulate the scheduled :weaver_cycle firing (instead of waiting 3s)
+      send(weaver.pid, :weaver_cycle)
+      Process.sleep(200)
+
+      state = :sys.get_state(weaver.pid)
       assert state.loop_task != nil
       assert state.status == :working
       assert state.task != nil
@@ -262,14 +270,13 @@ defmodule Loomkin.Teams.AgentWeaverTest do
   end
 
   describe "weaver bootstrap" do
-    test "bootstrap spawns concierge, orienter, and weaver" do
+    test "bootstrap spawns concierge and weaver" do
       team_id = unique_team_id()
 
-      # Manually spawn the 3 bootstrap agents as session.ex does
+      # Manually spawn the 2 bootstrap agents as session.ex does
       {:ok, _} = Manager.create_team(name: team_id, team_id: team_id)
 
       Manager.spawn_agent(team_id, "concierge", :concierge, [])
-      Manager.spawn_agent(team_id, "orienter", :orienter, [])
       Manager.spawn_agent(team_id, "weaver", :weaver, [])
 
       Process.sleep(200)
@@ -278,9 +285,8 @@ defmodule Loomkin.Teams.AgentWeaverTest do
       agent_names = Enum.map(agents, fn %{name: name} -> name end)
 
       assert "concierge" in agent_names
-      assert "orienter" in agent_names
       assert "weaver" in agent_names
-      assert length(agent_names) >= 3
+      assert length(agent_names) >= 2
 
       on_exit(fn ->
         Loomkin.Teams.TableRegistry.delete_table(team_id)

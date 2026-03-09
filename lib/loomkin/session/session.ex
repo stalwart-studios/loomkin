@@ -717,16 +717,9 @@ defmodule Loomkin.Session do
       kin_agents: kin_agents
     )
 
-    # Spawn Orienter (fast model)
+    # Spawn Weaver (fast model) — continuous coordination
     fast_model = state.fast_model || state.model
 
-    Loomkin.Teams.Manager.spawn_agent(team_id, "orienter", :orienter,
-      model: fast_model,
-      project_path: project_path,
-      session_id: state.id
-    )
-
-    # Spawn Weaver (fast model) — continuous coordination
     Loomkin.Teams.Manager.spawn_agent(team_id, "weaver", :weaver,
       model: fast_model,
       project_path: project_path,

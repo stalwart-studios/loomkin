@@ -28,10 +28,6 @@ defmodule Loomkin.Teams.RoleTest do
       assert {:ok, %Role{name: :concierge}} = Role.get(:concierge)
     end
 
-    test "returns :orienter role with correct config" do
-      assert {:ok, %Role{name: :orienter}} = Role.get(:orienter)
-    end
-
     test "returns :weaver role with correct config" do
       assert {:ok, %Role{name: :weaver}} = Role.get(:weaver)
     end
@@ -166,16 +162,15 @@ defmodule Loomkin.Teams.RoleTest do
   end
 
   describe "built_in_roles/0" do
-    test "lists all eight built-in roles" do
+    test "lists all seven built-in roles" do
       roles = Role.built_in_roles()
-      assert length(roles) == 8
+      assert length(roles) == 7
       assert :lead in roles
       assert :researcher in roles
       assert :coder in roles
       assert :reviewer in roles
       assert :tester in roles
       assert :concierge in roles
-      assert :orienter in roles
       assert :weaver in roles
     end
   end
@@ -222,19 +217,12 @@ defmodule Loomkin.Teams.RoleTest do
 
   describe "uniform model default" do
     test "most built-in roles use :default model_tier" do
-      fast_roles = [:orienter, :weaver]
-
-      for role_name <- Role.built_in_roles(), role_name not in fast_roles do
+      for role_name <- Role.built_in_roles(), role_name != :weaver do
         {:ok, role} = Role.get(role_name)
 
         assert role.model_tier == :default,
                "Expected #{role_name} to have model_tier :default, got #{inspect(role.model_tier)}"
       end
-    end
-
-    test "orienter uses :fast model_tier" do
-      {:ok, role} = Role.get(:orienter)
-      assert role.model_tier == :fast
     end
 
     test "weaver uses :fast model_tier" do
@@ -355,11 +343,6 @@ defmodule Loomkin.Teams.RoleTest do
       end
     end
 
-    test "orienter has Communication Priority section" do
-      {:ok, orienter} = Role.get(:orienter)
-      assert orienter.system_prompt =~ "### Communication Priority"
-    end
-
     test "researcher prompt mentions coder and weaver as primary contacts" do
       {:ok, researcher} = Role.get(:researcher)
       assert researcher.system_prompt =~ "**Keep close tabs with:** coder, weaver"
@@ -384,18 +367,13 @@ defmodule Loomkin.Teams.RoleTest do
       end
     end
 
-    test "duplicate prevention included for specialists but not orienter" do
-      # Specialists should have duplicate prevention
-      for role_name <- [:researcher, :coder, :reviewer, :tester, :lead, :weaver, :concierge] do
+    test "duplicate prevention included for all roles" do
+      for role_name <- Role.built_in_roles() do
         {:ok, role} = Role.get(role_name)
 
         assert role.system_prompt =~ "## Duplicate Work Prevention",
                "Expected #{role_name} prompt to include Duplicate Work Prevention"
       end
-
-      # Orienter should NOT have duplicate prevention
-      {:ok, orienter} = Role.get(:orienter)
-      refute orienter.system_prompt =~ "## Duplicate Work Prevention"
     end
   end
 end

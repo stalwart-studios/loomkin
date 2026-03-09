@@ -5,7 +5,7 @@ defmodule Loomkin.AgentLoop.Strategies do
   Bridges Loomkin's AgentLoop domain context (system prompt, model, rate limiting,
   event callbacks) into jido_ai's reasoning APIs. Non-ReAct strategies skip the
   tool loop entirely — they perform a single LLM reasoning pass and return the
-  result, which is cheaper and faster for analysis-only agents (e.g. Orienter).
+  result, which is cheaper and faster for analysis-only agents.
 
   The existing ReAct path in AgentLoop.run/2 remains completely unchanged.
   """

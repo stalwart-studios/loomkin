@@ -190,27 +190,6 @@ defmodule LoomkinWeb.KinPanelComponent do
               title="Active"
             />
           </div>
-          <div class="flex items-center gap-3 p-3 rounded-lg border border-subtle bg-surface-1">
-            <div class="flex items-center justify-center w-7 h-7 rounded-full bg-sky-500/15 text-sky-400 text-xs font-bold flex-shrink-0">
-              O
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="text-sm font-medium text-primary">Orienter</span>
-                <span class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-sky-500/15 text-sky-400">
-                  core
-                </span>
-              </div>
-              <p class="text-[10px] mt-0.5 text-muted">
-                Silently scans the project on session start and briefs the Concierge.
-              </p>
-            </div>
-            <span
-              :if={agent_active?("orienter", @active_agents)}
-              class="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"
-              title="Active"
-            />
-          </div>
         </div>
       </div>
 

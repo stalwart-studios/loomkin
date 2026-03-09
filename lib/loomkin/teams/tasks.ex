@@ -93,26 +93,32 @@ defmodule Loomkin.Teams.Tasks do
   end
 
   def fail_task(task_id, reason) do
-    task = get_task!(task_id)
+    case Ecto.UUID.cast(task_id) do
+      :error ->
+        {:error, :not_a_db_task}
 
-    if task.status in [:completed, :failed] do
-      {:ok, task}
-    else
-      task
-      |> TeamTask.changeset(%{status: :failed, result: reason})
-      |> Repo.update()
-      |> tap_ok(fn task ->
-        Comms.broadcast_task_event(task.team_id, {:task_failed, task.id, task.owner, reason})
+      {:ok, _} ->
+        task = get_task!(task_id)
 
-        Context.cache_task(task.team_id, task.id, %{
-          title: task.title,
-          status: :failed,
-          owner: task.owner
-        })
+        if task.status in [:completed, :failed] do
+          {:ok, task}
+        else
+          task
+          |> TeamTask.changeset(%{status: :failed, result: reason})
+          |> Repo.update()
+          |> tap_ok(fn task ->
+            Comms.broadcast_task_event(task.team_id, {:task_failed, task.id, task.owner, reason})
 
-        record_capability(task, :failure)
-        record_learning_metric(task, false)
-      end)
+            Context.cache_task(task.team_id, task.id, %{
+              title: task.title,
+              status: :failed,
+              owner: task.owner
+            })
+
+            record_capability(task, :failure)
+            record_learning_metric(task, false)
+          end)
+        end
     end
   end
 
@@ -189,9 +195,15 @@ defmodule Loomkin.Teams.Tasks do
   end
 
   def get_task(task_id) do
-    case Repo.get(TeamTask, task_id) do
-      nil -> {:error, :not_found}
-      task -> {:ok, task}
+    case Ecto.UUID.cast(task_id) do
+      :error ->
+        {:error, :not_found}
+
+      {:ok, _} ->
+        case Repo.get(TeamTask, task_id) do
+          nil -> {:error, :not_found}
+          task -> {:ok, task}
+        end
     end
   end
 
@@ -260,7 +272,10 @@ defmodule Loomkin.Teams.Tasks do
   # -- Private --
 
   defp get_task!(task_id) do
-    Repo.get!(TeamTask, task_id)
+    case Ecto.UUID.cast(task_id) do
+      {:ok, _} -> Repo.get!(TeamTask, task_id)
+      :error -> raise Ecto.NoResultsError, queryable: TeamTask
+    end
   end
 
   defp blocked_task_ids(team_id) do

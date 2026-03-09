@@ -260,14 +260,9 @@ defmodule Loomkin.Teams.Role do
     - Offload test results and coverage analysis for the team's reference
     """,
     concierge: """
-    - Incorporate the Orienter's session brief into your context before greeting the user
     - After receiving agent results, offload the synthesis to a keeper for future sessions
     - Monitor the team's context health and direct agents to keepers when needed
-    """,
-    orienter: """
-    - Your primary output is the session brief — always offload scan results to a keeper
-    - Query all available keepers to build a complete picture of prior work
-    - Your scans have high value for future sessions — always persist findings
+    - Use decision_query and search_keepers to build context when needed
     """,
     weaver: """
     - You ARE the context mesh coordinator — constantly search and retrieve keepers
@@ -323,12 +318,7 @@ defmodule Loomkin.Teams.Role do
     concierge: """
     - If a weaver exists, let them handle context routing between specialists
     - Use peer_message to relay context only when no weaver is present
-    - When the Orienter sends you a brief, acknowledge it internally and use it to inform your greeting
     - For teams of 3+ agents, spawn a weaver alongside specialists
-    """,
-    orienter: """
-    - Send your session brief to "concierge" via peer_message — this is your primary output
-    - Do not communicate with other agents directly — the Concierge handles coordination
     """,
     weaver: """
     - Route findings from researcher to coder, not just to lead
@@ -380,11 +370,6 @@ defmodule Loomkin.Teams.Role do
       secondary: [],
       directive:
         "The weaver handles knowledge routing so you can focus on user interaction and strategic delegation."
-    },
-    orienter: %{
-      primary: [:concierge],
-      secondary: [],
-      directive: "Send your brief to the concierge. That's your only communication target."
     }
   }
 
@@ -600,11 +585,10 @@ defmodule Loomkin.Teams.Role do
       - Synthesize results from specialists into coherent responses
       - Maintain conversational awareness across the session
 
-      ## Session Brief
-      - The Orienter agent runs a background scan at session start
-      - When you receive a peer_message from the Orienter with a session brief, incorporate it
-      - If the user sends a message before the brief arrives, respond with what you know
-        and incorporate the brief when it arrives
+      ## Context Awareness
+      - Use decision_query (type: "pulse") to scan for active goals and coverage gaps
+      - Use search_keepers to check for prior session context before responding
+      - Build situational awareness yourself — scan on demand rather than waiting for briefings
 
       ## Coordination Style
       - You are a warm host, not a cold dispatcher
@@ -641,61 +625,6 @@ defmodule Loomkin.Teams.Role do
       these fit.
 
       {kin_roster}
-      """
-    },
-    orienter: %{
-      model_tier: :fast,
-      reasoning_strategy: :cot,
-      tools:
-        @read_only_tools ++
-          @decision_tools ++
-          [
-            Loomkin.Tools.PeerMessage,
-            Loomkin.Tools.ContextRetrieve,
-            Loomkin.Tools.SearchKeepers,
-            Loomkin.Tools.ContextOffload,
-            Loomkin.Tools.Git
-          ],
-      system_prompt: """
-      You are the Orienter — a silent background agent that scans the project and decision
-      graph at session start to build situational awareness.
-
-      ## Scanning Protocol
-      1. Use decision_query with type "pulse" to check active goals, coverage gaps, and stale nodes
-      2. Use decision_query with type "active_goals" for detailed goal info
-      3. Use search_keepers to find prior session context
-      4. Use git with action "log" to check the last 20 commits
-      5. Synthesize findings into a structured session brief
-      6. Send the brief to "concierge" via peer_message
-
-      ## Session Brief Format
-      Send the brief as a peer_message to "concierge" with this structure:
-      ```
-      ## Session Brief
-      ### Active Goals
-      - [list active goals from decision graph]
-      ### Recent Activity
-      - [recent commits, decisions, observations]
-      ### Coverage Gaps
-      - [areas that need attention]
-      ### Prior Context
-      - [relevant keeper summaries]
-      ### Hypotheses
-      - [what the user might want to work on based on recent activity]
-      ```
-
-      ## Rules
-      - You are read-only — never modify files
-      - Work silently — your output goes only to the Concierge
-      - Be fast and concise — use the fast model efficiently
-      - If tools fail, skip them and report what you have
-      - Always send the brief even if some scans fail
-
-      ## Initial Goal Creation
-      After scanning, if no active goals exist (pulse shows 0 active goals):
-      - Create a goal node using decision_log with node_type "goal"
-      - Base the goal title on project state and recent activity
-      - Set confidence based on clarity of direction
       """
     },
     weaver: %{
@@ -810,11 +739,9 @@ defmodule Loomkin.Teams.Role do
         ""
       end
 
-    duplicate_block = if role == :orienter, do: "", else: @duplicate_prevention_prompt
-
     base_prompt <>
       @shared_behavioral_guidance <>
-      duplicate_block <>
+      @duplicate_prevention_prompt <>
       @peer_communication_prompt <>
       "\n### Peer Communication for Your Role\n" <>
       peer_guidance <>

@@ -1,7 +1,7 @@
 defmodule Loomkin.Tools.TeamSpawn do
   @moduledoc "Spawn a team with agents."
 
-  @valid_roles ~w(lead researcher coder reviewer tester concierge orienter weaver)
+  @valid_roles ~w(lead researcher coder reviewer tester concierge weaver)
 
   use Jido.Action,
     name: "team_spawn",
@@ -182,9 +182,6 @@ defmodule Loomkin.Tools.TeamSpawn do
 
         String.contains?(downcased, "concierge") or String.contains?(downcased, "host") ->
           :concierge
-
-        String.contains?(downcased, "orient") or String.contains?(downcased, "scanner") ->
-          :orienter
 
         # If the LLM sends a security/quality/architecture analysis role, map to researcher
         String.contains?(downcased, "security") or String.contains?(downcased, "quality") or

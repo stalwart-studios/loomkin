@@ -169,7 +169,7 @@ defmodule LoomkinWeb.DecisionGraphComponentTest do
           node_type: :decision,
           title: "New Decision",
           status: :active,
-          agent_name: "orienter"
+          agent_name: "concierge"
         })
 
       # Re-render with refresh_ref to simulate signal-triggered reload

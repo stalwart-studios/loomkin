@@ -221,11 +221,12 @@ defmodule Loomkin.Teams.Agent do
         broadcast_team(state, {:agent_status, state.name, :idle})
         Logger.info("[Kin:agent] registered name=#{name} role=#{role} — broadcasting :idle")
 
-        cond do
-          role == :orienter -> {:ok, state, {:continue, :auto_orient}}
-          role == :weaver -> {:ok, state, {:continue, :auto_weave}}
-          true -> {:ok, state}
+        if role == :weaver do
+          # Stagger weaver start to avoid rate-limiting other bootstrap agents
+          Process.send_after(self(), :weaver_cycle, 3_000)
         end
+
+        {:ok, state}
 
       {:error, :unknown_role} ->
         Logger.error("[Kin:agent] UNKNOWN ROLE #{inspect(role)} for #{name}")
@@ -254,43 +255,6 @@ defmodule Loomkin.Teams.Agent do
     end
 
     Comms.unsubscribe(state.subscription_ids)
-  end
-
-  @impl true
-  def handle_continue(:auto_orient, state) do
-    Logger.info("[Kin:agent] orienter auto-orient starting team=#{state.team_id}")
-    state = set_status_and_broadcast(state, :working)
-
-    task_id = "bootstrap_orient_#{state.team_id}"
-
-    Context.cache_task(state.team_id, task_id, %{
-      title: "orientation scan",
-      status: :in_progress,
-      owner: state.name
-    })
-
-    state = %{state | task: %{id: task_id, title: "orientation scan"}}
-
-    orientation_prompt = """
-    Begin your orientation scan now. Follow your scanning protocol:
-    1. Use decision_query with type "pulse" to check active goals, coverage gaps, and stale nodes
-    2. Use decision_query with type "active_goals" for detailed goal info
-    3. Use search_keepers to find prior session context
-    4. Use git with action "log" to check the last 20 commits
-    5. Synthesize findings into a structured session brief
-    6. Send the brief to "concierge" via peer_message
-    """
-
-    messages = [%{role: :user, content: orientation_prompt}]
-    loop_opts = build_loop_opts(state)
-    snapshot = build_snapshot(state)
-
-    task =
-      Task.Supervisor.async_nolink(Loomkin.Teams.TaskSupervisor, fn ->
-        run_loop_with_escalation(messages, loop_opts, snapshot)
-      end)
-
-    {:noreply, %{state | loop_task: {task, nil}, messages: messages}}
   end
 
   @impl true
@@ -392,7 +356,7 @@ defmodule Loomkin.Teams.Agent do
     {:reply, :ok, %{state | paused_state: updated_ps}}
   end
 
-  # Completed or errored agents (e.g., orienter after auto-orient) ignore broadcasts
+  # Completed or errored agents ignore broadcasts
   @impl true
   def handle_call({:inject_broadcast, _text}, _from, %{status: status} = state)
       when status in [:complete, :error] do
@@ -1064,19 +1028,13 @@ defmodule Loomkin.Teams.Agent do
         state = %{state | messages: msgs, failure_count: 0, loop_task: nil, task: nil}
         state = track_usage(state, meta)
 
-        # Orienter is one-shot: mark complete instead of idle after auto-orient
         # Weaver stays idle and schedules next cycle
         state =
-          cond do
-            state.role == :orienter and is_nil(from) ->
-              set_status_and_broadcast(state, :complete)
-
-            state.role == :weaver and is_nil(from) ->
-              maybe_schedule_weaver_cycle(state)
-              set_status_and_broadcast(state, :idle)
-
-            true ->
-              set_status_and_broadcast(state, :idle)
+          if state.role == :weaver and is_nil(from) do
+            maybe_schedule_weaver_cycle(state)
+            set_status_and_broadcast(state, :idle)
+          else
+            set_status_and_broadcast(state, :idle)
           end
 
         if from do
@@ -1115,19 +1073,13 @@ defmodule Loomkin.Teams.Agent do
 
         state = track_usage(state, meta)
 
-        # Orienter is one-shot: mark complete instead of idle after auto-orient
         # Weaver stays idle and schedules next cycle
         state =
-          cond do
-            state.role == :orienter and is_nil(from) ->
-              set_status_and_broadcast(state, :complete)
-
-            state.role == :weaver and is_nil(from) ->
-              maybe_schedule_weaver_cycle(state)
-              set_status_and_broadcast(state, :idle)
-
-            true ->
-              set_status_and_broadcast(state, :idle)
+          if state.role == :weaver and is_nil(from) do
+            maybe_schedule_weaver_cycle(state)
+            set_status_and_broadcast(state, :idle)
+          else
+            set_status_and_broadcast(state, :idle)
           end
 
         if from do
@@ -1279,16 +1231,10 @@ defmodule Loomkin.Teams.Agent do
         state = %{state | loop_task: nil, task: nil}
 
         status =
-          cond do
-            reason in [:normal, :shutdown] ->
-              :idle
-
-            # Orienter auto-orient is best-effort (no caller); failure is non-critical
-            state.role == :orienter and from == nil ->
-              :complete
-
-            true ->
-              :error
+          if reason in [:normal, :shutdown] do
+            :idle
+          else
+            :error
           end
 
         state = set_status_and_broadcast(state, status)
@@ -2446,8 +2392,7 @@ defmodule Loomkin.Teams.Agent do
     "reviewer" => 0.30,
     "tester" => 0.30,
     "lead" => 0.50,
-    "concierge" => 0.10,
-    "orienter" => 0.10
+    "concierge" => 0.10
   }
 
   @default_max_agents_per_team 10

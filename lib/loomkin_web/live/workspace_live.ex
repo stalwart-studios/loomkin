@@ -465,7 +465,7 @@ defmodule LoomkinWeb.WorkspaceLive do
 
           # Additionally broadcast to non-bootstrap agents (for multi-agent awareness)
           Enum.each(agents, fn agent ->
-            if agent.name not in ["concierge", "orienter"] do
+            if agent.name != "concierge" do
               Task.Supervisor.start_child(Loomkin.Teams.TaskSupervisor, fn ->
                 try do
                   Loomkin.Teams.Agent.inject_broadcast(
@@ -4572,7 +4572,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       Enum.reduce(cards, {[], [], []}, fn {name, card}, {c, s, w} ->
         cond do
           card.role in [:concierge] -> {[name | c], s, w}
-          card.role in [:orienter, :weaver] -> {c, [name | s], w}
+          card.role in [:weaver] -> {c, [name | s], w}
           true -> {c, s, [name | w]}
         end
       end)

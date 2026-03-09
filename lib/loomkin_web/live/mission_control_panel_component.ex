@@ -12,7 +12,7 @@ defmodule LoomkinWeb.MissionControlPanelComponent do
   Parent-provided assigns:
     - agent_cards               map of agent_name => card struct
     - concierge_card_names      list of agent names with concierge role
-    - system_card_names         list of agent names with system/infrastructure roles (orienter)
+    - system_card_names         list of agent names with system/infrastructure roles (weaver)
     - worker_card_names         list of agent names with worker roles
     - comms_event_count         integer
     - focused_agent             binary | nil
@@ -119,7 +119,7 @@ defmodule LoomkinWeb.MissionControlPanelComponent do
           />
         </div>
 
-        <%!-- System agents (orienter etc.) — compact status, no interactive buttons --%>
+        <%!-- System agents (weaver etc.) — compact status, no interactive buttons --%>
         <div :if={system_card_names(assigns) != []} class="px-3 pb-2">
           <div
             :for={name <- system_card_names(assigns)}
@@ -178,7 +178,7 @@ defmodule LoomkinWeb.MissionControlPanelComponent do
           >
             <div class="text-muted text-xs">Start a session to meet your kin</div>
             <div class="text-[10px] mt-0.5 text-muted">
-              Concierge + Orienter spawn automatically
+              Concierge + Weaver spawn automatically
             </div>
           </div>
 
