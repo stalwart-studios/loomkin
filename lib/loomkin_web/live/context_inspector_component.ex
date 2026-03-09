@@ -72,6 +72,7 @@ defmodule LoomkinWeb.ContextInspectorComponent do
             </div>
           </div>
         <% else %>
+          <.tab_bar tabs={@tabs} active_tab={@active_tab} agent_color={nil} myself={@myself} />
           <.empty_state myself={@myself} />
         <% end %>
       <% end %>

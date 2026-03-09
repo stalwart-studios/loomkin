@@ -28,6 +28,17 @@ hljs.registerLanguage("markdown", markdown)
 hljs.registerLanguage("yaml", yaml)
 hljs.registerLanguage("diff", diff)
 
+// --- Tooltip anchor fix ---
+// CSS anchor-name is tied to :hover, so when hover ends the anchor disappears
+// immediately — causing the fixed tooltip to jump before it fades out.
+// This keeps the anchor valid for the duration of the exit transition.
+document.addEventListener("mouseleave", (e) => {
+  const el = e.target.closest?.("[data-tooltip]")
+  if (!el) return
+  el.classList.add("tooltip-exiting")
+  setTimeout(() => el.classList.remove("tooltip-exiting"), 200)
+}, { capture: true })
+
 // --- Utilities ---
 
 function trapFocus(containerEl) {

@@ -1270,7 +1270,8 @@ body {
   }
 
   [data-tooltip]:hover,
-  [data-tooltip]:focus-visible {
+  [data-tooltip]:focus-visible,
+  [data-tooltip].tooltip-exiting {
     anchor-name: --tooltip-active;
   }
 
