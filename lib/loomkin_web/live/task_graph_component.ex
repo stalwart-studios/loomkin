@@ -253,14 +253,14 @@ defmodule LoomkinWeb.TaskGraphComponent do
         |> MapSet.to_list()
 
       # DFS from each root, find longest path
-      {_max_len, path_edges} =
-        Enum.reduce(roots, {0, []}, fn root, {best_len, best_edges} ->
-          {len, edges} = dfs_longest_path(root, adj, %{})
+      {_max_len, path_edges, _memo} =
+        Enum.reduce(roots, {0, [], %{}}, fn root, {best_len, best_edges, memo} ->
+          {len, edges, memo} = dfs_longest_path(root, adj, memo)
 
           if len > best_len do
-            {len, edges}
+            {len, edges, memo}
           else
-            {best_len, best_edges}
+            {best_len, best_edges, memo}
           end
         end)
 
@@ -269,22 +269,33 @@ defmodule LoomkinWeb.TaskGraphComponent do
   end
 
   defp dfs_longest_path(node, adj, memo) do
-    children = Map.get(adj, node, [])
+    case Map.get(memo, node) do
+      nil ->
+        children = Map.get(adj, node, [])
 
-    if children == [] do
-      {0, []}
-    else
-      children
-      |> Enum.map(fn child ->
-        {child_len, child_edges} =
-          case Map.get(memo, child) do
-            nil -> dfs_longest_path(child, adj, memo)
-            cached -> cached
-          end
+        if children == [] do
+          memo = Map.put(memo, node, {0, []})
+          {0, [], memo}
+        else
+          {best, memo} =
+            Enum.reduce(children, {{0, []}, memo}, fn child, {{best_len, best_edges}, memo} ->
+              {child_len, child_edges, memo} = dfs_longest_path(child, adj, memo)
+              candidate = {child_len + 1, [{node, child} | child_edges]}
 
-        {child_len + 1, [{node, child} | child_edges]}
-      end)
-      |> Enum.max_by(fn {len, _} -> len end)
+              if child_len + 1 > best_len do
+                {candidate, memo}
+              else
+                {{best_len, best_edges}, memo}
+              end
+            end)
+
+          {len, edges} = best
+          memo = Map.put(memo, node, {len, edges})
+          {len, edges, memo}
+        end
+
+      {len, edges} ->
+        {len, edges, memo}
     end
   end
 

@@ -177,16 +177,6 @@ defmodule LoomkinWeb.DecisionGraphComponent do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col h-full bg-gray-950 text-gray-100">
-      <style>
-        @keyframes conflict-pulse {
-          0%, 100% { stroke-opacity: 0.5; }
-          50% { stroke-opacity: 1; }
-        }
-        .conflict-glow {
-          animation: conflict-pulse 1.5s ease-in-out infinite;
-        }
-      </style>
-
       <div class="px-3 py-2.5 border-b border-gray-800">
         <h3 class="text-[10px] font-semibold text-gray-500 uppercase tracking-widest">
           Decision Graph

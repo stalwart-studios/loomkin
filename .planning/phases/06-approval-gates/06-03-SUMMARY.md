@@ -123,3 +123,17 @@ Pre-existing test failures (4 in full suite run) verified to be environmental: G
 ---
 *Phase: 06-approval-gates*
 *Completed: 2026-03-08*
+
+## Self-Check: PASSED
+
+- lib/loomkin_web/live/workspace_live.ex: FOUND
+- test/loomkin_web/live/workspace_live_approval_test.exs: FOUND
+- .planning/phases/06-approval-gates/06-03-SUMMARY.md: FOUND
+- commit 71e71a0: FOUND
+- commit 4fb1da9: FOUND
+- handle_event approve_card_agent at line 718: FOUND
+- handle_event deny_card_agent at line 735: FOUND
+- send_approval_response/2 at line 4319: FOUND
+- handle_info agent.approval.requested at line 998: FOUND
+- handle_info agent.approval.resolved at line 1046: FOUND
+- 15 tests, 0 failures: CONFIRMED

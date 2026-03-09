@@ -1217,6 +1217,14 @@ body {
   pointer-events: none;
 }
 
+@keyframes conflict-pulse {
+  0%, 100% { stroke-opacity: 0.5; }
+  50% { stroke-opacity: 1; }
+}
+.conflict-glow {
+  animation: conflict-pulse 1.5s ease-in-out infinite;
+}
+
 /* ══════════════════════════════════════════
    Tooltips — CSS Anchor Positioning
    ══════════════════════════════════════════ */

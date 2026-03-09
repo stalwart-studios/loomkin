@@ -47,7 +47,10 @@ defmodule LoomkinWeb.ComposerComponent do
   end
 
   def handle_event("set_schedule_delay", %{"minutes" => minutes}, socket) do
-    {:noreply, assign(socket, schedule_delay_minutes: String.to_integer(minutes))}
+    case Integer.parse(minutes) do
+      {val, _} when val > 0 -> {:noreply, assign(socket, schedule_delay_minutes: val)}
+      _ -> {:noreply, socket}
+    end
   end
 
   # Forward these events to the parent LiveView

@@ -701,7 +701,10 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, push_event(socket, "focus-input", %{})}
   end
 
-  # keyboard_shortcut "command_palette" now handled by CommandPaletteComponent
+  def handle_event("keyboard_shortcut", %{"key" => "command_palette"}, socket) do
+    send_update(LoomkinWeb.CommandPaletteComponent, id: "command-palette", toggle: true)
+    {:noreply, socket}
+  end
 
   def handle_event("keyboard_shortcut", %{"key" => "focus_panel_4"}, socket) do
     {:noreply, assign(socket, file_drawer_open: !socket.assigns.file_drawer_open)}
@@ -997,16 +1000,14 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   # Batched signals from TeamBroadcaster — critical signals (instant delivery)
   def handle_info({:team_broadcast, %{critical: signals}}, socket) do
-    for sig <- signals, do: send(self(), {:signal, sig})
+    socket = Enum.reduce(signals, socket, &dispatch_signal/2)
     {:noreply, socket}
   end
 
   # Batched signals from TeamBroadcaster — regular batched delivery
   def handle_info({:team_broadcast, batch}, socket) when is_map(batch) do
-    for {_category, signals} <- batch, sig <- signals do
-      send(self(), {:signal, sig})
-    end
-
+    signals = Enum.flat_map(batch, fn {_category, sigs} -> sigs end)
+    socket = Enum.reduce(signals, socket, &dispatch_signal/2)
     {:noreply, socket}
   end
 
@@ -1028,7 +1029,7 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   # TeamBroadcaster pre-filters signals by team_id, so no additional filtering needed.
   def handle_info({:signal, %Jido.Signal{} = sig}, socket) do
-    handle_info(sig, socket)
+    {:noreply, dispatch_signal(sig, socket)}
   end
 
   def handle_info(%Jido.Signal{type: "agent.status"} = sig, socket) do
@@ -2804,6 +2805,15 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
+  # Dispatches a signal inline, returning the updated socket.
+  # Used by team_broadcast handlers to avoid extra mailbox hops.
+  defp dispatch_signal(%Jido.Signal{} = sig, socket) do
+    case handle_info(sig, socket) do
+      {:noreply, socket} -> socket
+      _ -> socket
+    end
+  end
+
   # --- Render ---
 
   def render(assigns) do
@@ -3054,82 +3064,84 @@ defmodule LoomkinWeb.WorkspaceLive do
           />
         <% else %>
           <%!-- Mission Control Left: Agent Cards + Comms + Composer --%>
-          <.live_component
-            module={LoomkinWeb.MissionControlPanelComponent}
-            id="mission-control-panel"
-            agent_cards={@agent_cards}
-            concierge_card_names={@concierge_card_names}
-            worker_card_names={@worker_card_names}
-            comms_event_count={@comms_event_count}
-            comms_stream={@streams.comms_events}
-            focused_agent={@focused_agent}
-            kin_agents={@kin_agents}
-            cached_agents={@cached_agents}
-            active_team_id={@active_team_id}
-            leader_approval_pending={@leader_approval_pending}
-          />
-
-          <%!-- Chat + Composer column --%>
           <div class="flex-1 flex flex-col min-w-0 min-h-0 border-r border-subtle">
-            <div class="flex-1 overflow-auto min-h-0">
-              <.live_component
-                module={LoomkinWeb.ChatComponent}
-                id="chat"
-                messages={@messages}
-                status={@status}
-                current_tool={@current_tool}
-                streaming={@streaming}
-                streaming_content={@streaming_content}
-                streaming_agent={@streaming_agent}
-                architect_phase={@architect_phase}
-                plan_steps={@plan_steps}
-                current_step={@current_step}
-                failed_message_idx={@failed_message_idx}
-              />
-            </div>
-
-            <%!-- Pending ask_user questions --%>
-            <div
-              :if={@pending_questions != []}
-              class="flex-shrink-0 px-3 py-2 border-t border-brand bg-surface-1"
-            >
-              <.live_component
-                module={LoomkinWeb.AskUserComponent}
-                id="ask-user-questions-mc"
-                questions={@pending_questions}
-              />
-            </div>
-
             <.live_component
-              module={LoomkinWeb.ComposerComponent}
-              id="composer"
-              input_text={@input_text}
-              reply_target={Map.get(assigns, :reply_target)}
-              cached_agents={@cached_agents}
-              cached_budget={@cached_budget}
-              budget_pct={@budget_pct}
-              budget_bar_color_class={@budget_bar_color_class}
-              last_user_message={@last_user_message}
-              queue_drawer={@queue_drawer}
-              scheduled_messages={@scheduled_messages}
-              agent_queues={@agent_queues}
-              active_team_id={@active_team_id}
-              session_id={@session_id}
-              status={@status}
+              module={LoomkinWeb.MissionControlPanelComponent}
+              id="mission-control-panel"
               agent_cards={@agent_cards}
-              broadcast_mode={@broadcast_mode}
-              agent_count={length(@cached_agents)}
+              concierge_card_names={@concierge_card_names}
+              worker_card_names={@worker_card_names}
+              comms_event_count={@comms_event_count}
+              comms_stream={@streams.comms_events}
+              focused_agent={@focused_agent}
+              kin_agents={@kin_agents}
+              cached_agents={@cached_agents}
+              active_team_id={@active_team_id}
+              leader_approval_pending={@leader_approval_pending}
             />
 
-            <%!-- Queue drawer overlay --%>
-            <.live_component
-              :if={@queue_drawer}
-              module={LoomkinWeb.MessageQueueComponent}
-              id={"queue-drawer-#{@queue_drawer.agent}"}
-              queue={Map.get(@agent_queues, @queue_drawer.agent, [])}
-              agent_name={@queue_drawer.agent}
-              team_id={@queue_drawer.team_id}
-            />
+            <%!-- Chat + Composer column --%>
+            <div class="flex-1 flex flex-col min-w-0 min-h-0 border-r border-subtle">
+              <div class="flex-1 overflow-auto min-h-0">
+                <.live_component
+                  module={LoomkinWeb.ChatComponent}
+                  id="chat"
+                  messages={@messages}
+                  status={@status}
+                  current_tool={@current_tool}
+                  streaming={@streaming}
+                  streaming_content={@streaming_content}
+                  streaming_agent={@streaming_agent}
+                  architect_phase={@architect_phase}
+                  plan_steps={@plan_steps}
+                  current_step={@current_step}
+                  failed_message_idx={@failed_message_idx}
+                />
+              </div>
+
+              <%!-- Pending ask_user questions --%>
+              <div
+                :if={@pending_questions != []}
+                class="flex-shrink-0 px-3 py-2 border-t border-brand bg-surface-1"
+              >
+                <.live_component
+                  module={LoomkinWeb.AskUserComponent}
+                  id="ask-user-questions-mc"
+                  questions={@pending_questions}
+                />
+              </div>
+
+              <.live_component
+                module={LoomkinWeb.ComposerComponent}
+                id="composer"
+                input_text={@input_text}
+                reply_target={Map.get(assigns, :reply_target)}
+                cached_agents={@cached_agents}
+                cached_budget={@cached_budget}
+                budget_pct={@budget_pct}
+                budget_bar_color_class={@budget_bar_color_class}
+                last_user_message={@last_user_message}
+                queue_drawer={@queue_drawer}
+                scheduled_messages={@scheduled_messages}
+                agent_queues={@agent_queues}
+                active_team_id={@active_team_id}
+                session_id={@session_id}
+                status={@status}
+                agent_cards={@agent_cards}
+                broadcast_mode={@broadcast_mode}
+                agent_count={length(@cached_agents)}
+              />
+
+              <%!-- Queue drawer overlay --%>
+              <.live_component
+                :if={@queue_drawer}
+                module={LoomkinWeb.MessageQueueComponent}
+                id={"queue-drawer-#{@queue_drawer.agent}"}
+                queue={Map.get(@agent_queues, @queue_drawer.agent, [])}
+                agent_name={@queue_drawer.agent}
+                team_id={@queue_drawer.team_id}
+              />
+            </div>
           </div>
 
           <%!-- Right: Agent Deep-Focus Panel (w-80, collapsible) --%>
