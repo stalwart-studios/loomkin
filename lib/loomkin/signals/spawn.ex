@@ -9,6 +9,11 @@ defmodule Loomkin.Signals.Spawn do
         agent_name: [type: :string, required: true, doc: "Name of the requesting agent"],
         team_id: [type: :string, required: true, doc: "Team the agent belongs to"],
         team_name: [type: :string, required: true, doc: "Name of the team to be spawned"],
+        purpose: [
+          type: :string,
+          required: false,
+          doc: "Brief description of what the team will do, shown in the approval UI"
+        ],
         roles: [
           type: {:list, :map},
           required: true,

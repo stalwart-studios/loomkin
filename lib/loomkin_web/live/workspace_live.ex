@@ -1259,12 +1259,14 @@ defmodule LoomkinWeb.WorkspaceLive do
 
     timeout_ms = sig.data[:timeout_ms] || 300_000
     limit_warning = sig.data[:limit_warning]
+    purpose = sig.data[:purpose]
     auto_approve_spawns = sig.data[:auto_approve_spawns] || false
 
     pending_approval = %{
       type: :spawn_gate,
       gate_id: gate_id,
       team_name: team_name,
+      purpose: purpose,
       roles: roles,
       estimated_cost: estimated_cost,
       limit_warning: limit_warning,

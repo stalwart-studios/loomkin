@@ -2430,7 +2430,11 @@ defmodule Loomkin.Teams.Agent do
     gate_id = Ecto.UUID.generate()
 
     team_name =
-      Map.get(tool_args, "name", Map.get(tool_args, :name, "unnamed-team"))
+      Map.get(tool_args, "team_name", Map.get(tool_args, :team_name, nil)) ||
+        Map.get(tool_args, "name", Map.get(tool_args, :name, "unnamed-team"))
+
+    purpose =
+      Map.get(tool_args, "purpose", Map.get(tool_args, :purpose, nil))
 
     timeout_ms =
       Map.get(tool_args, "timeout_ms", Map.get(tool_args, :timeout_ms, nil)) ||
@@ -2442,6 +2446,7 @@ defmodule Loomkin.Teams.Agent do
       type: :spawn_gate,
       gate_id: gate_id,
       team_name: team_name,
+      purpose: purpose,
       roles: roles,
       estimated_cost: estimated_cost,
       limit_warning: limit_warning
@@ -2467,6 +2472,7 @@ defmodule Loomkin.Teams.Agent do
             agent_name: to_string(agent_name),
             team_id: team_id,
             team_name: team_name,
+            purpose: purpose,
             roles: roles,
             estimated_cost: estimated_cost,
             limit_warning: limit_warning,

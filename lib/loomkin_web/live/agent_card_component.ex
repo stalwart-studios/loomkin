@@ -531,20 +531,34 @@ defmodule LoomkinWeb.AgentCardComponent do
           </span>
         </div>
 
-        <%!-- Team name --%>
-        <p class="text-sm font-medium text-zinc-200">
-          {@card[:pending_approval][:team_name]}
+        <%!-- Team name + cost --%>
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-sm font-medium text-zinc-200">
+            {@card[:pending_approval][:team_name]}
+          </p>
+          <span class="text-[10px] tabular-nums text-violet-300/80 flex-shrink-0">
+            {"~$#{Float.round(@card[:pending_approval][:estimated_cost] || 0.0, 2)}"}
+          </span>
+        </div>
+
+        <%!-- Purpose --%>
+        <p
+          :if={@card[:pending_approval][:purpose]}
+          class="text-xs text-zinc-300 leading-relaxed"
+        >
+          {@card[:pending_approval][:purpose]}
         </p>
 
-        <%!-- Role composition --%>
-        <p class="text-xs text-zinc-400">
-          {format_roles(@card[:pending_approval][:roles])}
-        </p>
-
-        <%!-- Estimated cost --%>
-        <p class="text-xs text-violet-300/80">
-          {"estimated ~$#{Float.round(@card[:pending_approval][:estimated_cost] || 0.0, 2)}"}
-        </p>
+        <%!-- Role composition — individual agents --%>
+        <div class="flex flex-wrap gap-1.5">
+          <span
+            :for={role <- @card[:pending_approval][:roles] || []}
+            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20"
+          >
+            <span class="text-zinc-400">{Map.get(role, :name) || Map.get(role, "name")}</span>
+            <span class="text-violet-400/60">{Map.get(role, :role) || Map.get(role, "role")}</span>
+          </span>
+        </div>
 
         <%!-- Limit warning --%>
         <p
@@ -922,14 +936,6 @@ defmodule LoomkinWeb.AgentCardComponent do
   defp hex_to_rgba(color, _alpha), do: color
 
   # --- Spawn gate helpers ---
-
-  defp format_roles(roles) when is_list(roles) do
-    roles
-    |> Enum.group_by(fn r -> Map.get(r, "role") || Map.get(r, :role) || "unknown" end)
-    |> Enum.map_join(", ", fn {role, members} -> "#{role} x#{length(members)}" end)
-  end
-
-  defp format_roles(_), do: ""
 
   # --- Test delegates for private helper functions ---
   # These thin wrappers allow unit tests to verify private logic

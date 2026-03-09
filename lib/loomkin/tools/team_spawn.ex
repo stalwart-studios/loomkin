@@ -13,6 +13,12 @@ defmodule Loomkin.Tools.TeamSpawn do
         "Returns a team status summary with team_id and agent list.",
     schema: [
       team_name: [type: :string, required: true, doc: "Human-readable team name"],
+      purpose: [
+        type: :string,
+        required: true,
+        doc:
+          "Brief description of what this team will do and why it's being created. Shown to the user in the spawn approval prompt."
+      ],
       roles: [
         type: {:list, :map},
         required: true,
