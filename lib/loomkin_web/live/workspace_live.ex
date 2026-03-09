@@ -820,6 +820,43 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
+  # --- Spawn Gate ---
+
+  def handle_event(
+        "approve_spawn",
+        %{"gate_id" => gate_id, "agent" => _agent_name} = params,
+        socket
+      ) do
+    context = params["context"]
+    send_spawn_gate_response(gate_id, %{outcome: :approved, context: context})
+    {:noreply, socket}
+  end
+
+  def handle_event(
+        "deny_spawn",
+        %{"gate_id" => gate_id, "agent" => _agent_name} = params,
+        socket
+      ) do
+    reason = params["reason"] || ""
+    send_spawn_gate_response(gate_id, %{outcome: :denied, reason: reason})
+    {:noreply, socket}
+  end
+
+  def handle_event(
+        "toggle_auto_approve_spawns",
+        %{"agent" => agent_name, "enabled" => enabled_str},
+        socket
+      ) do
+    enabled = enabled_str == "true"
+
+    case find_agent_pid(socket, agent_name, nil) do
+      {:ok, pid} -> GenServer.call(pid, {:set_auto_approve_spawns, enabled})
+      :error -> :ok
+    end
+
+    {:noreply, socket}
+  end
+
   # Agent card actions now forwarded via {:mission_control_event, ...}
   # Queue drawer toggle now forwarded via {:composer_event, ...}
 
@@ -1149,6 +1186,43 @@ defmodule LoomkinWeb.WorkspaceLive do
       |> stream_insert(:comms_events, event)
       |> update(:comms_event_count, &(&1 + 1))
 
+    {:noreply, socket}
+  end
+
+  # --- Spawn Gate signals ---
+
+  def handle_info(%Jido.Signal{type: "agent.spawn.gate.requested"} = sig, socket) do
+    %{
+      gate_id: gate_id,
+      agent_name: agent_name,
+      team_name: team_name,
+      roles: roles,
+      estimated_cost: estimated_cost
+    } = sig.data
+
+    timeout_ms = sig.data[:timeout_ms] || 300_000
+    limit_warning = sig.data[:limit_warning]
+    auto_approve_spawns = sig.data[:auto_approve_spawns] || false
+
+    pending_approval = %{
+      type: :spawn_gate,
+      gate_id: gate_id,
+      team_name: team_name,
+      roles: roles,
+      estimated_cost: estimated_cost,
+      limit_warning: limit_warning,
+      timeout_ms: timeout_ms,
+      started_at: System.monotonic_time(:millisecond),
+      auto_approve_spawns: auto_approve_spawns
+    }
+
+    socket = update_agent_card(socket, agent_name, %{pending_approval: pending_approval})
+    {:noreply, socket}
+  end
+
+  def handle_info(%Jido.Signal{type: "agent.spawn.gate.resolved"} = sig, socket) do
+    %{agent_name: agent_name} = sig.data
+    socket = update_agent_card(socket, agent_name, %{pending_approval: nil})
     {:noreply, socket}
   end
 
@@ -4453,6 +4527,16 @@ defmodule LoomkinWeb.WorkspaceLive do
     case Registry.lookup(Loomkin.Teams.AgentRegistry, {:approval_gate, gate_id}) do
       [{pid, _}] ->
         send(pid, {:approval_response, gate_id, decision})
+
+      [] ->
+        :ok
+    end
+  end
+
+  defp send_spawn_gate_response(gate_id, decision) do
+    case Registry.lookup(Loomkin.Teams.AgentRegistry, {:spawn_gate, gate_id}) do
+      [{pid, _}] ->
+        send(pid, {:spawn_gate_response, gate_id, decision})
 
       [] ->
         :ok
