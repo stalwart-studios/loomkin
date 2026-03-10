@@ -117,6 +117,7 @@ defmodule Loomkin.MixProject do
 
       # Dev/Test
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:live_debugger, "~> 0.6.0", only: :dev},
       {:tidewave, "~> 0.5", only: :dev},
       {:mox, "~> 1.0", only: :test},
       {:floki, "~> 0.37", only: :test},
