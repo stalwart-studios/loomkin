@@ -59,16 +59,27 @@ defmodule LoomkinWeb.SwitchProjectComponent do
     <div :if={@recent_projects != []} class="mb-3">
       <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">Recent</p>
       <div class="flex flex-col gap-1">
-        <button
-          :for={rp <- @recent_projects}
-          phx-click="switch_project_set_path"
-          phx-value-path={rp}
-          phx-target={@myself}
-          class="flex items-center gap-2 text-left px-3 py-1.5 rounded-lg text-xs font-mono text-gray-300 bg-gray-800/40 hover:bg-gray-800 transition truncate"
-        >
-          <.icon name="hero-clock-mini" class="w-3 h-3 text-gray-500 flex-shrink-0" />
-          {rp}
-        </button>
+        <div :for={rp <- @recent_projects} class="flex items-center gap-1.5">
+          <button
+            phx-click="switch_project_set_path"
+            phx-value-path={rp}
+            phx-target={@myself}
+            class="flex-1 flex items-center gap-2 text-left px-3 py-1.5 rounded-lg text-xs font-mono text-gray-300 bg-gray-800/40 hover:bg-gray-800 transition truncate min-w-0"
+            title={"Switch to #{rp}"}
+          >
+            <.icon name="hero-clock-mini" class="w-3 h-3 text-gray-500 flex-shrink-0" />
+            <span class="truncate">{rp}</span>
+          </button>
+          <button
+            phx-click="new_session_for_project"
+            phx-value-path={rp}
+            phx-target={@myself}
+            class="flex-shrink-0 flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-medium text-violet-400 bg-violet-500/10 hover:bg-violet-500/20 transition"
+            title={"New session in #{Path.basename(rp)}"}
+          >
+            <.icon name="hero-plus-mini" class="w-3 h-3" /> New
+          </button>
+        </div>
       </div>
     </div>
 
@@ -276,6 +287,11 @@ defmodule LoomkinWeb.SwitchProjectComponent do
   def handle_event("switch_project_set_path", %{"path" => path}, socket) do
     expanded = path |> String.trim() |> Path.expand()
     send(self(), {:switch_project_set_path, expanded})
+    {:noreply, socket}
+  end
+
+  def handle_event("new_session_for_project", %{"path" => path}, socket) do
+    send(self(), {:new_session_for_project, path})
     {:noreply, socket}
   end
 

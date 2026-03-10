@@ -686,12 +686,6 @@ defmodule Loomkin.Session do
       Logger.warning("[Kin:session] broadcast :llm_error failed: #{inspect(e)}")
   end
 
-  defp broadcast(session_id, event) do
-    Logger.warning(
-      "[Kin:session] unhandled broadcast event for #{session_id}: #{inspect(event, limit: 200)}"
-    )
-  end
-
   defp maybe_spawn_bootstrap_agents(%{bootstrap_spawned: true} = state), do: state
 
   defp maybe_spawn_bootstrap_agents(%{team_id: nil} = state), do: state

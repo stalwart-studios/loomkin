@@ -334,7 +334,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       active_team_id: active_team_id,
       scheduled_messages: scheduled_messages,
       switch_project_modal: nil,
-      recent_projects: [],
+      recent_projects: load_recent_projects(project_path),
       reply_target: nil,
       channel_bindings: channel_bindings,
       kin_agents: load_kin_agents(),
@@ -2116,6 +2116,10 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   def handle_info(:new_session, socket) do
     {:noreply, push_navigate(socket, to: ~p"/")}
+  end
+
+  def handle_info({:new_session_for_project, path}, socket) do
+    {:noreply, push_navigate(socket, to: ~p"/sessions/new?#{%{project_path: path}}")}
   end
 
   def handle_info({:select_session, session_id}, socket) do
@@ -5094,6 +5098,13 @@ defmodule LoomkinWeb.WorkspaceLive do
 
   defp load_kin_agents do
     Loomkin.Kin.list_all()
+  end
+
+  defp load_recent_projects(current_path) do
+    Loomkin.Session.Persistence.list_projects()
+    |> Enum.map(& &1.project_path)
+    |> Enum.reject(&(&1 == current_path))
+    |> Enum.take(5)
   end
 
   defp forward_to_team_components(socket) do
