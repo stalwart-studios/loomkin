@@ -3361,28 +3361,82 @@ defmodule LoomkinWeb.WorkspaceLive do
         </div>
       </header>
 
-      <%!-- Status Banner — always visible, shows current system state --%>
-      <div class="flex-shrink-0 flex items-center gap-3 px-4 py-1.5 bg-surface-1 border-b border-subtle text-xs">
+      <%!-- Status Banner — always visible, loud indicators for debugging --%>
+      <div class={[
+        "flex-shrink-0 flex items-center gap-4 px-4 py-2 border-b text-sm font-medium",
+        if(@status in [:thinking, :executing_tool, :streaming],
+          do: "bg-violet-950/80 border-violet-500/40",
+          else: "bg-surface-1 border-subtle"
+        )
+      ]}>
+        <%!-- Status pill — large and color-coded --%>
         <span class={status_banner_class(@status)}>
           {status_label(@status, @current_tool_name)}
         </span>
 
-        <span :if={@architect_phase} class="text-amber-400 font-mono">
-          phase: {@architect_phase}
+        <%!-- Architect phase — bold amber --%>
+        <span
+          :if={@architect_phase}
+          class="flex items-center gap-1.5 text-amber-300 font-mono font-bold"
+        >
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          {@architect_phase}
         </span>
 
-        <span :if={@current_tool} class="text-blue-400 font-mono truncate">
-          tool: {@current_tool}
+        <%!-- Current tool — bold blue with spinner --%>
+        <span
+          :if={@current_tool}
+          class="flex items-center gap-1.5 text-blue-300 font-mono font-bold truncate max-w-[40%]"
+        >
+          <svg
+            class="animate-spin h-3.5 w-3.5 text-blue-400 flex-shrink-0"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
+            </circle>
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            >
+            </path>
+          </svg>
+          {@current_tool}
         </span>
 
-        <span :if={@streaming} class="text-emerald-400 animate-pulse">streaming...</span>
-
-        <span :if={@cached_agents != []} class="text-purple-400">
-          agents: {length(@cached_agents)}
+        <%!-- Streaming indicator — green pulse --%>
+        <span :if={@streaming} class="flex items-center gap-1.5 text-emerald-300 font-bold">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> streaming
         </span>
 
-        <button phx-click="toggle_debug_panel" class="ml-auto text-zinc-500 hover:text-zinc-300">
-          signals: {length(@debug_signals)}
+        <%!-- Agent count --%>
+        <span :if={@cached_agents != []} class="flex items-center gap-1 text-purple-300">
+          <span class="text-purple-400">{length(@cached_agents)}</span> agents
+        </span>
+
+        <%!-- Debug panel toggle — right-aligned with signal count badge --%>
+        <button
+          phx-click="toggle_debug_panel"
+          class={[
+            "ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors",
+            if(@debug_panel_open,
+              do: "bg-violet-600/30 text-violet-300",
+              else: "hover:bg-surface-2 text-zinc-400 hover:text-zinc-200"
+            )
+          ]}
+        >
+          <span class="text-xs">signals</span>
+          <span class={[
+            "inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-[11px] font-bold",
+            if(length(@debug_signals) > 0,
+              do: "bg-violet-500/40 text-violet-200",
+              else: "bg-zinc-700 text-zinc-500"
+            )
+          ]}>
+            {length(@debug_signals)}
+          </span>
         </button>
       </div>
 
@@ -3665,20 +3719,31 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp status_label(:unknown, _tool), do: "Unknown"
   defp status_label(status, _tool), do: to_string(status)
 
-  defp status_banner_class(:idle), do: "px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300"
+  defp status_banner_class(:idle),
+    do: "px-3 py-1 rounded-full text-sm font-semibold bg-zinc-700/80 text-zinc-300"
 
   defp status_banner_class(:thinking),
-    do: "px-2 py-0.5 rounded-full bg-amber-900/60 text-amber-300 animate-pulse"
+    do:
+      "px-3 py-1 rounded-full text-sm font-bold bg-amber-500/20 text-amber-200 ring-2 ring-amber-500/50 animate-pulse"
 
   defp status_banner_class(:streaming),
-    do: "px-2 py-0.5 rounded-full bg-emerald-900/60 text-emerald-300 animate-pulse"
+    do:
+      "px-3 py-1 rounded-full text-sm font-bold bg-emerald-500/20 text-emerald-200 ring-2 ring-emerald-500/50 animate-pulse"
 
   defp status_banner_class(:executing_tool),
-    do: "px-2 py-0.5 rounded-full bg-blue-900/60 text-blue-300 animate-pulse"
+    do:
+      "px-3 py-1 rounded-full text-sm font-bold bg-blue-500/20 text-blue-200 ring-2 ring-blue-500/50 animate-pulse"
 
-  defp status_banner_class(:error), do: "px-2 py-0.5 rounded-full bg-red-900/60 text-red-300"
-  defp status_banner_class(:unknown), do: "px-2 py-0.5 rounded-full bg-red-900/60 text-red-300"
-  defp status_banner_class(_), do: "px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300"
+  defp status_banner_class(:error),
+    do:
+      "px-3 py-1 rounded-full text-sm font-bold bg-red-500/20 text-red-200 ring-2 ring-red-500/50"
+
+  defp status_banner_class(:unknown),
+    do:
+      "px-3 py-1 rounded-full text-sm font-bold bg-red-500/20 text-red-200 ring-2 ring-red-500/50"
+
+  defp status_banner_class(_),
+    do: "px-3 py-1 rounded-full text-sm font-semibold bg-zinc-700/80 text-zinc-300"
 
   defp append_debug_signal(socket, sig) do
     entry = %{

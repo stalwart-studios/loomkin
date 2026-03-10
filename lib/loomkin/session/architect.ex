@@ -16,6 +16,8 @@ defmodule Loomkin.Session.Architect do
      Reports back results per plan item.
   """
 
+  require Logger
+
   alias Loomkin.Session.ContextWindow
   alias Loomkin.Session.Persistence
   alias Loomkin.Telemetry, as: LoomkinTelemetry
@@ -1014,7 +1016,8 @@ defmodule Loomkin.Session.Architect do
     signal = Loomkin.Signals.Session.NewMessage.new!(%{session_id: session_id})
     Loomkin.Signals.publish(%{signal | data: Map.put(signal.data, :message, msg)})
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Architect] broadcast :new_message failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:permission_request, _sid, tool_name, tool_path, :session}) do
@@ -1027,7 +1030,8 @@ defmodule Loomkin.Session.Architect do
 
     Loomkin.Signals.publish(signal)
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Architect] broadcast :permission_request failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:stream_start, _sid}) do
@@ -1039,7 +1043,8 @@ defmodule Loomkin.Session.Architect do
       | data: Map.put(signal.data, :raw_event, {:stream_start, session_id})
     })
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Architect] broadcast :stream_start failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:stream_delta, _sid, payload}) do
@@ -1051,7 +1056,8 @@ defmodule Loomkin.Session.Architect do
       | data: Map.put(signal.data, :raw_event, {:stream_delta, session_id, payload})
     })
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Architect] broadcast :stream_delta failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:stream_end, _sid}) do
@@ -1063,12 +1069,11 @@ defmodule Loomkin.Session.Architect do
       | data: Map.put(signal.data, :raw_event, {:stream_end, session_id})
     })
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Architect] broadcast :stream_end failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, event) do
-    require Logger
-
     Logger.warning(
       "[Architect] unhandled broadcast event for #{session_id}: #{inspect(event, limit: 200)}"
     )

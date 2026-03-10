@@ -3,6 +3,8 @@ defmodule Loomkin.Session do
 
   use GenServer
 
+  require Logger
+
   alias Loomkin.Session.Architect
   alias Loomkin.Session.Persistence
 
@@ -213,7 +215,6 @@ defmodule Loomkin.Session do
 
     # Try routing to Concierge first (bootstrap agent pattern)
     result = maybe_route_to_concierge(state, text)
-    require Logger
     Logger.info("[Kin:session] new_message routing=#{inspect(result)}")
 
     case result do
@@ -331,7 +332,6 @@ defmodule Loomkin.Session do
 
   @impl true
   def handle_info({:team_created, team_id}, state) do
-    require Logger
     Logger.info("[Kin:session] team_created team=#{team_id} session=#{state.id}")
     broadcast(state.id, {:team_available, state.id, team_id})
     {:noreply, Map.put(state, :team_id, team_id)}
@@ -409,7 +409,6 @@ defmodule Loomkin.Session do
 
     case state.architect_task do
       {%Task{ref: ^ref}, from} ->
-        require Logger
         Logger.error("[Kin:session] llm error session=#{state.id} reason=#{inspect(reason)}")
         broadcast(state.id, {:llm_error, state.id, format_error(reason)})
         state = %{state | architect_task: nil}
@@ -429,7 +428,6 @@ defmodule Loomkin.Session do
 
     case state.architect_task do
       {%Task{ref: ^ref}, from} ->
-        require Logger
         Logger.error("[Kin:session] llm error session=#{state.id} reason=#{inspect(reason)}")
         broadcast(state.id, {:llm_error, state.id, format_error(reason)})
         state = %{state | messages: new_state.messages, architect_task: nil}
@@ -447,8 +445,6 @@ defmodule Loomkin.Session do
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) when is_reference(ref) do
     case state.architect_task do
       {%Task{ref: ^ref}, from} ->
-        require Logger
-
         Logger.error(
           "[Kin:session] architect crashed session=#{state.id} reason=#{inspect(reason)}"
         )
@@ -637,21 +633,24 @@ defmodule Loomkin.Session do
     signal = Loomkin.Signals.Session.NewMessage.new!(%{session_id: session_id})
     Loomkin.Signals.publish(%{signal | data: Map.put(signal.data, :message, msg)})
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Kin:session] broadcast :new_message failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:session_status, _session_id, status}) do
     signal = Loomkin.Signals.Session.StatusChanged.new!(%{session_id: session_id, status: status})
     Loomkin.Signals.publish(signal)
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Kin:session] broadcast :session_status failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:session_cancelled, _session_id}) do
     signal = Loomkin.Signals.Session.Cancelled.new!(%{session_id: session_id})
     Loomkin.Signals.publish(signal)
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Kin:session] broadcast :session_cancelled failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:team_available, _session_id, team_id}) do
@@ -660,7 +659,8 @@ defmodule Loomkin.Session do
 
     Loomkin.Signals.publish(signal)
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Kin:session] broadcast :team_available failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:child_team_available, _session_id, child_team_id}) do
@@ -672,7 +672,8 @@ defmodule Loomkin.Session do
 
     Loomkin.Signals.publish(signal)
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Kin:session] broadcast :child_team_available failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, {:llm_error, _session_id, error}) do
@@ -681,17 +682,14 @@ defmodule Loomkin.Session do
 
     Loomkin.Signals.publish(signal)
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Kin:session] broadcast :llm_error failed: #{inspect(e)}")
   end
 
   defp broadcast(session_id, event) do
-    # Fallback for any unmapped session events
-    signal =
-      Loomkin.Signals.Session.StatusChanged.new!(%{session_id: session_id, status: :unknown})
-
-    Loomkin.Signals.publish(%{signal | data: Map.put(signal.data, :raw_event, event)})
-  rescue
-    _ -> :ok
+    Logger.warning(
+      "[Kin:session] unhandled broadcast event for #{session_id}: #{inspect(event, limit: 200)}"
+    )
   end
 
   defp maybe_spawn_bootstrap_agents(%{bootstrap_spawned: true} = state), do: state
@@ -702,7 +700,6 @@ defmodule Loomkin.Session do
     team_id = state.team_id
     project_path = state.project_path
 
-    require Logger
     Logger.info("[Kin:session] spawning bootstrap agents team=#{team_id}")
 
     # Load kin agents from DB for concierge prompt injection
