@@ -308,6 +308,52 @@ defmodule Loomkin.Teams.Comms do
     |> Signals.publish()
   end
 
+  def broadcast_task_event(
+        team_id,
+        {:task_speculative_started, task_id, based_on_task_id, assumed_output}
+      ) do
+    signal =
+      Loomkin.Signals.Team.TaskSpeculativeStarted.new!(%{
+        task_id: task_id,
+        based_on_task_id: based_on_task_id,
+        team_id: team_id
+      })
+
+    %{signal | data: Map.put(signal.data, :assumed_output, assumed_output)}
+    |> Causality.attach(team_id: team_id, task_id: task_id)
+    |> Signals.publish()
+  end
+
+  def broadcast_task_event(team_id, {:assumption_violated, task_id, key, assumed, actual}) do
+    Loomkin.Signals.Team.AssumptionViolated.new!(%{
+      task_id: task_id,
+      assumption_key: key,
+      assumed_value: assumed,
+      actual_value: actual,
+      team_id: team_id
+    })
+    |> Causality.attach(team_id: team_id, task_id: task_id)
+    |> Signals.publish()
+  end
+
+  def broadcast_task_event(team_id, {:speculative_confirmed, task_id}) do
+    Loomkin.Signals.Team.SpeculativeConfirmed.new!(%{
+      task_id: task_id,
+      team_id: team_id
+    })
+    |> Causality.attach(team_id: team_id, task_id: task_id)
+    |> Signals.publish()
+  end
+
+  def broadcast_task_event(team_id, {:speculative_discarded, task_id}) do
+    Loomkin.Signals.Team.SpeculativeDiscarded.new!(%{
+      task_id: task_id,
+      team_id: team_id
+    })
+    |> Causality.attach(team_id: team_id, task_id: task_id)
+    |> Signals.publish()
+  end
+
   def broadcast_task_event(team_id, event) do
     # Fallback for other task events
     signal = Loomkin.Signals.Collaboration.PeerMessage.new!(%{from: "tasks", team_id: team_id})

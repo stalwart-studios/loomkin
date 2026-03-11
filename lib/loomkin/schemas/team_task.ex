@@ -19,7 +19,10 @@ defmodule Loomkin.Schemas.TeamTask do
         :failed,
         :ready_for_review,
         :blocked,
-        :partially_complete
+        :partially_complete,
+        :pending_speculative,
+        :completed_tentative,
+        :discarded_tentative
       ]
 
     field :owner, :string
@@ -33,11 +36,14 @@ defmodule Loomkin.Schemas.TeamTask do
     field :completed_items, :integer
     field :total_items, :integer
     field :partial_results, :map
+    field :speculative, :boolean, default: false
+    field :based_on_tentative, :binary_id
+    field :confidence, :decimal, default: Decimal.new("1.0")
     timestamps(type: :utc_datetime)
   end
 
   @required_fields ~w(team_id title status)a
-  @optional_fields ~w(description owner priority model_hint result cost_usd tokens_used milestones_emitted milestones_required completed_items total_items partial_results)a
+  @optional_fields ~w(description owner priority model_hint result cost_usd tokens_used milestones_emitted milestones_required completed_items total_items partial_results speculative based_on_tentative confidence)a
 
   def changeset(task, attrs) do
     task

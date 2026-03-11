@@ -3,6 +3,7 @@ defmodule Loomkin.Teams.Tasks do
 
   import Ecto.Query
   alias Loomkin.Repo
+  alias Loomkin.Schemas.TaskAssumption
   alias Loomkin.Schemas.TeamTask
   alias Loomkin.Schemas.TeamTaskDep
   alias Loomkin.Teams.Capabilities
@@ -26,7 +27,7 @@ defmodule Loomkin.Teams.Tasks do
     end)
   end
 
-  def assign_task(task_id, agent_name) do
+  def assign_task(task_id, agent_name, opts \\ []) do
     get_task!(task_id)
     |> TeamTask.changeset(%{owner: agent_name, status: :assigned})
     |> Repo.update()
@@ -38,6 +39,15 @@ defmodule Loomkin.Teams.Tasks do
         status: :assigned,
         owner: agent_name
       })
+
+      if Keyword.get(opts, :negotiable, false) do
+        Loomkin.Teams.Negotiation.start_negotiation(
+          task.team_id,
+          task.id,
+          agent_name,
+          Keyword.take(opts, [:timeout_ms])
+        )
+      end
     end)
   end
 
@@ -88,6 +98,7 @@ defmodule Loomkin.Teams.Tasks do
         record_capability(task, :success)
         record_learning_metric(task, true)
         auto_schedule_unblocked(task.team_id)
+        validate_speculative_dependents(task)
       end)
     end
   end
@@ -228,6 +239,12 @@ defmodule Loomkin.Teams.Tasks do
     end
   end
 
+  @doc """
+  Resume a partially complete task, transitioning it back to `:in_progress`.
+
+  Preserves the partial result context so the agent can continue where it left off.
+  Returns `{:ok, task}` or `{:error, :invalid_transition}`.
+  """
   def resume_task(task_id) do
     task = get_task!(task_id)
 
@@ -277,9 +294,11 @@ defmodule Loomkin.Teams.Tasks do
   end
 
   @doc """
-  Returns predecessor output data for all completed `:requires_output` dependencies.
+  Returns predecessor output data for completed or partially complete `:requires_output` dependencies.
 
-  Returns `[%{task_id: id, title: title, result: result}]`.
+  Returns `[%{task_id: id, title: title, result: result, partial: boolean}]`.
+  Completed tasks return their full result. Partially complete tasks return
+  their partial results with `partial: true`.
   """
   def get_predecessor_outputs(task_id) do
     completed =
@@ -291,6 +310,7 @@ defmodule Loomkin.Teams.Tasks do
             d.task_id == ^task_id and d.dep_type == :requires_output and dep.status == :completed,
           select: %{task_id: dep.id, title: dep.title, result: dep.result}
       )
+      |> Enum.map(&Map.put(&1, :partial, false))
 
     partial =
       Repo.all(
@@ -552,6 +572,195 @@ defmodule Loomkin.Teams.Tasks do
     |> Enum.into(%{})
   end
 
+  # -- Speculative Execution --
+
+  @doc """
+  Start speculative execution on a task that is blocked by `blocker_task_id`.
+
+  Marks the task as `:pending_speculative`, records the assumed output, and
+  broadcasts a `TaskSpeculativeStarted` signal.
+  """
+  def start_speculative(task_id, blocker_task_id, assumed_output) do
+    task = get_task!(task_id)
+
+    if task.status not in [:pending, :blocked] do
+      {:error, :invalid_transition}
+    else
+      task
+      |> TeamTask.changeset(%{
+        status: :pending_speculative,
+        speculative: true,
+        based_on_tentative: blocker_task_id,
+        confidence: Decimal.new("0.5")
+      })
+      |> Repo.update()
+      |> tap_ok(fn task ->
+        record_assumption(task.id, "blocker_output", assumed_output)
+
+        Comms.broadcast_task_event(
+          task.team_id,
+          {:task_speculative_started, task.id, blocker_task_id, assumed_output}
+        )
+
+        Context.cache_task(task.team_id, task.id, %{
+          title: task.title,
+          status: :pending_speculative,
+          owner: task.owner
+        })
+      end)
+    end
+  end
+
+  @doc """
+  Record an assumption for a speculative task.
+
+  Stores the assumption key and assumed value in the `task_assumptions` table.
+  """
+  def record_assumption(task_id, assumption_key, assumed_value, _opts \\ []) do
+    %TaskAssumption{}
+    |> TaskAssumption.changeset(%{
+      task_id: task_id,
+      assumption_key: assumption_key,
+      assumed_value: assumed_value
+    })
+    |> Repo.insert()
+  end
+
+  @doc """
+  Validate assumptions for a speculative task against the actual blocker output.
+
+  Compares each assumption's `assumed_value` against the `actual_value` (the
+  blocker's result). Returns `{:ok, true}` or `{:error, mismatches}`.
+  """
+  def validate_assumptions(task_id) do
+    task = get_task!(task_id)
+
+    if not task.speculative do
+      {:error, :not_speculative}
+    else
+      assumptions = Repo.all(from a in TaskAssumption, where: a.task_id == ^task_id)
+
+      blocker_result =
+        case task.based_on_tentative do
+          nil -> nil
+          blocker_id -> Repo.get(TeamTask, blocker_id)
+        end
+
+      actual_output = if blocker_result, do: blocker_result.result, else: nil
+
+      mismatches =
+        Enum.reduce(assumptions, [], fn assumption, acc ->
+          matched = assumption.assumed_value == actual_output
+
+          assumption
+          |> TaskAssumption.changeset(%{actual_value: actual_output, matched: matched})
+          |> Repo.update()
+
+          if matched do
+            acc
+          else
+            [
+              %{
+                key: assumption.assumption_key,
+                assumed: assumption.assumed_value,
+                actual: actual_output
+              }
+              | acc
+            ]
+          end
+        end)
+
+      if mismatches == [] do
+        {:ok, true}
+      else
+        {:error, mismatches}
+      end
+    end
+  end
+
+  @doc """
+  Confirm a tentative speculative task result.
+
+  Transitions `:completed_tentative` to `:completed` and sets confidence to 1.0.
+  """
+  def confirm_tentative(task_id) do
+    task = get_task!(task_id)
+
+    if task.status != :completed_tentative do
+      {:error, :invalid_transition}
+    else
+      task
+      |> TeamTask.changeset(%{status: :completed, confidence: Decimal.new("1.0")})
+      |> Repo.update()
+      |> tap_ok(fn task ->
+        Comms.broadcast_task_event(task.team_id, {:speculative_confirmed, task.id})
+
+        Context.cache_task(task.team_id, task.id, %{
+          title: task.title,
+          status: :completed,
+          owner: task.owner
+        })
+
+        auto_schedule_unblocked(task.team_id)
+      end)
+    end
+  end
+
+  @doc """
+  Discard a tentative speculative task result.
+
+  Marks the task as `:discarded_tentative`. Optionally re-queues the task as
+  `:pending` for non-speculative execution when `requeue: true` is passed.
+  """
+  def discard_tentative(task_id, opts \\ []) do
+    task = get_task!(task_id)
+
+    if task.status not in [:completed_tentative, :pending_speculative] do
+      {:error, :invalid_transition}
+    else
+      task
+      |> TeamTask.changeset(%{status: :discarded_tentative})
+      |> Repo.update()
+      |> tap_ok(fn task ->
+        Comms.broadcast_task_event(task.team_id, {:speculative_discarded, task.id})
+
+        Context.cache_task(task.team_id, task.id, %{
+          title: task.title,
+          status: :discarded_tentative,
+          owner: task.owner
+        })
+
+        if Keyword.get(opts, :requeue, false) do
+          requeue_speculative(task)
+        end
+      end)
+    end
+  end
+
+  @doc """
+  Mark a speculative task as tentatively completed.
+
+  The task remains in `:completed_tentative` until its assumptions are validated.
+  """
+  def complete_speculative(task_id, result) do
+    task = get_task!(task_id)
+
+    if task.status not in [:pending_speculative, :in_progress] or not task.speculative do
+      {:error, :invalid_transition}
+    else
+      task
+      |> TeamTask.changeset(%{status: :completed_tentative, result: result})
+      |> Repo.update()
+      |> tap_ok(fn task ->
+        Context.cache_task(task.team_id, task.id, %{
+          title: task.title,
+          status: :completed_tentative,
+          owner: task.owner
+        })
+      end)
+    end
+  end
+
   # -- Private --
 
   defp get_task!(task_id) do
@@ -683,6 +892,53 @@ defmodule Loomkin.Teams.Tasks do
         do_detect_cycle(dep_id, target, visited, depth + 1, max_depth)
       end)
     end
+  end
+
+  defp validate_speculative_dependents(task) do
+    speculative_tasks =
+      Repo.all(
+        from t in TeamTask,
+          where: t.based_on_tentative == ^task.id and t.speculative == true,
+          where: t.status in [:pending_speculative, :completed_tentative]
+      )
+
+    Enum.each(speculative_tasks, fn spec_task ->
+      case validate_assumptions(spec_task.id) do
+        {:ok, true} ->
+          if spec_task.status == :completed_tentative do
+            confirm_tentative(spec_task.id)
+          end
+
+        {:error, mismatches} ->
+          Enum.each(mismatches, fn m ->
+            Comms.broadcast_task_event(
+              spec_task.team_id,
+              {:assumption_violated, spec_task.id, m.key, m.assumed, m.actual}
+            )
+          end)
+
+          discard_tentative(spec_task.id, requeue: true)
+      end
+    end)
+  end
+
+  defp requeue_speculative(task) do
+    task
+    |> TeamTask.changeset(%{
+      status: :pending,
+      speculative: false,
+      based_on_tentative: nil,
+      confidence: Decimal.new("1.0"),
+      result: nil
+    })
+    |> Repo.update()
+    |> tap_ok(fn requeued ->
+      Context.cache_task(requeued.team_id, requeued.id, %{
+        title: requeued.title,
+        status: :pending,
+        owner: requeued.owner
+      })
+    end)
   end
 
   defp tap_ok({:ok, val} = result, fun) do

@@ -215,4 +215,118 @@ defmodule Loomkin.Signals.Team do
         team_id: [type: :string, required: true]
       ]
   end
+
+  defmodule TaskNegotiationStarted do
+    use Jido.Signal,
+      type: "team.task.negotiation.started",
+      schema: [
+        task_id: [type: :string, required: true],
+        agent_name: [type: :string, required: true],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule TaskNegotiationOffer do
+    use Jido.Signal,
+      type: "team.task.negotiation.offer",
+      schema: [
+        task_id: [type: :string, required: true],
+        agent_name: [type: :string, required: true],
+        reason: [type: :string],
+        counter_proposal: [type: :string],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule TaskNegotiationResolved do
+    use Jido.Signal,
+      type: "team.task.negotiation.resolved",
+      schema: [
+        task_id: [type: :string, required: true],
+        agent_name: [type: :string, required: true],
+        resolution: [type: :string, required: true],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule TaskNegotiationTimedOut do
+    use Jido.Signal,
+      type: "team.task.negotiation.timed_out",
+      schema: [
+        task_id: [type: :string, required: true],
+        agent_name: [type: :string, required: true],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule TaskSpeculativeStarted do
+    use Jido.Signal,
+      type: "team.task.speculative.started",
+      schema: [
+        task_id: [type: :string, required: true],
+        based_on_task_id: [type: :string, required: true],
+        assumed_output: [type: :string],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule AssumptionViolated do
+    use Jido.Signal,
+      type: "team.task.assumption.violated",
+      schema: [
+        task_id: [type: :string, required: true],
+        assumption_key: [type: :string, required: true],
+        assumed_value: [type: :string],
+        actual_value: [type: :string],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule SpeculativeConfirmed do
+    use Jido.Signal,
+      type: "team.task.speculative.confirmed",
+      schema: [
+        task_id: [type: :string, required: true],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule SpeculativeDiscarded do
+    use Jido.Signal,
+      type: "team.task.speculative.discarded",
+      schema: [
+        task_id: [type: :string, required: true],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule ComplexityThresholdReached do
+    use Jido.Signal,
+      type: "team.complexity.threshold_reached",
+      schema: [
+        team_id: [type: :string, required: true],
+        complexity_score: [type: :integer, required: true]
+      ]
+  end
+
+  defmodule TeamSpawnSuggested do
+    use Jido.Signal,
+      type: "team.spawn.suggested",
+      schema: [
+        team_id: [type: :string, required: true],
+        specialist_type: [type: :string, required: true],
+        reason: [type: :string, required: true],
+        complexity_score: [type: :integer, required: true]
+      ]
+  end
+
+  defmodule TeamSpawnConfirmed do
+    use Jido.Signal,
+      type: "team.spawn.confirmed",
+      schema: [
+        team_id: [type: :string, required: true],
+        specialist_type: [type: :string, required: true],
+        child_team_id: [type: :string, required: true]
+      ]
+  end
 end
