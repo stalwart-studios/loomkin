@@ -77,6 +77,7 @@ defmodule LoomkinWeb.DecisionGraphComponent do
        pulse_generated_at: nil,
        selected_node: nil,
        agent_filter: nil,
+       visible_types: MapSet.new([:goal, :decision, :observation, :revisit]),
        new_node_ids: MapSet.new(),
        collapsed_ids: MapSet.new(),
        fullscreen: false,
@@ -197,8 +198,14 @@ defmodule LoomkinWeb.DecisionGraphComponent do
     # Apply agent filter
     agent_filter = socket.assigns[:agent_filter]
 
+    visible_types =
+      socket.assigns[:visible_types] ||
+        MapSet.new([:goal, :decision, :observation, :revisit])
+
     {visible_nodes, visible_edges} =
-      apply_agent_filter(nodes, relevant_edges, agent_filter)
+      nodes
+      |> then(&apply_agent_filter(&1, relevant_edges, agent_filter))
+      |> then(fn {n, e} -> apply_type_filter(n, e, visible_types) end)
 
     positioned = layout_nodes(visible_nodes)
     {svg_w, svg_h} = compute_svg_dimensions(positioned)
@@ -248,6 +255,23 @@ defmodule LoomkinWeb.DecisionGraphComponent do
 
   def handle_event("filter_agent", %{"agent" => agent_name}, socket) do
     {:noreply, recompute_visible(socket, agent_name)}
+  end
+
+  def handle_event("toggle_type", %{"type" => type_str}, socket) do
+    type = String.to_existing_atom(type_str)
+    visible = socket.assigns.visible_types
+
+    visible =
+      if MapSet.member?(visible, type),
+        do: MapSet.delete(visible, type),
+        else: MapSet.put(visible, type)
+
+    {:noreply, recompute_visible(socket, socket.assigns.agent_filter, visible)}
+  end
+
+  def handle_event("show_all_types", _params, socket) do
+    all = MapSet.new([:goal, :decision, :option, :action, :outcome, :observation, :revisit])
+    {:noreply, recompute_visible(socket, socket.assigns.agent_filter, all)}
   end
 
   def handle_event("toggle_tree_node", %{"id" => node_id}, socket) do
@@ -338,6 +362,47 @@ defmodule LoomkinWeb.DecisionGraphComponent do
         </button>
       </div>
 
+      <%!-- Node type toggle buttons --%>
+      <div class="px-3 py-2 border-b border-gray-800 flex flex-wrap gap-1">
+        <button
+          phx-click="show_all_types"
+          phx-target={@myself}
+          class={[
+            "px-2 py-1 text-xs rounded-full border transition-colors",
+            if(MapSet.size(@visible_types) == 7,
+              do: "border-violet-400 text-violet-400 bg-violet-400/10",
+              else: "border-gray-700 text-gray-400 hover:border-gray-500"
+            )
+          ]}
+        >
+          All
+        </button>
+        <button
+          :for={type <- [:goal, :decision, :action, :option, :outcome, :observation, :revisit]}
+          phx-click="toggle_type"
+          phx-value-type={type}
+          phx-target={@myself}
+          class={[
+            "px-2 py-1 text-xs rounded-full border flex items-center gap-1 transition-colors",
+            if(MapSet.member?(@visible_types, type),
+              do: "border-current bg-current/10",
+              else: "border-gray-700 text-gray-400 hover:border-gray-500"
+            )
+          ]}
+          style={
+            if MapSet.member?(@visible_types, type),
+              do: "color: #{type_color(type)}",
+              else: ""
+          }
+        >
+          <span
+            class="inline-block w-2 h-2 rounded-full"
+            style={"background-color: #{type_color(type)}"}
+          />
+          {type}
+        </button>
+      </div>
+
       <%!-- Main content: tree view --%>
       <div class="flex-1 overflow-auto relative">
         <%= if @nodes == [] do %>
@@ -359,18 +424,11 @@ defmodule LoomkinWeb.DecisionGraphComponent do
               selected_node={@selected_node}
               conflict_ids={@conflict_ids}
               new_node_ids={@new_node_ids}
+              edges={@edges}
+              nodes={@nodes}
               myself={@myself}
             />
           </div>
-
-          <%!-- Node detail panel --%>
-          <.node_detail
-            :if={@selected_node}
-            node={@selected_node}
-            edges={@edges}
-            nodes={@nodes}
-            myself={@myself}
-          />
         <% end %>
       </div>
 
@@ -388,6 +446,7 @@ defmodule LoomkinWeb.DecisionGraphComponent do
         new_node_ids={@new_node_ids}
         agents={@agents}
         agent_filter={@agent_filter}
+        visible_types={@visible_types}
         edges={@edges}
         nodes={@nodes}
         svg_width={@svg_width}
@@ -431,20 +490,13 @@ defmodule LoomkinWeb.DecisionGraphComponent do
     <div>
       <div
         class={[
-          "flex items-center gap-1.5 py-1 px-2 group cursor-pointer transition-colors duration-100",
+          "flex items-center gap-1.5 py-1 group cursor-pointer transition-colors duration-100",
           "hover:bg-gray-800/40",
           @selected && "bg-gray-800/60",
           @is_new && "bg-gray-800/30"
         ]}
-        style={"padding-left: #{8 + @depth * 16}px"}
+        style={"padding-left: #{8 + @depth * 20}px; padding-right: 8px"}
       >
-        <%!-- Indent guide --%>
-        <div
-          :if={@depth > 0}
-          class="absolute left-0 top-0 bottom-0 w-0.5"
-          style={"left: #{@depth * 16}px; background-color: #{@depth_color}33"}
-        />
-
         <%!-- Expand/collapse chevron --%>
         <%= if @has_children do %>
           <button
@@ -509,8 +561,22 @@ defmodule LoomkinWeb.DecisionGraphComponent do
         </button>
       </div>
 
-      <%!-- Children (recursive) --%>
-      <div :if={@has_children && !@collapsed}>
+      <%!-- Inline detail panel --%>
+      <.inline_node_detail
+        :if={@selected}
+        node={@node}
+        edges={@edges}
+        nodes={@nodes}
+        depth={@depth}
+        myself={@myself}
+      />
+
+      <%!-- Children with colored left border --%>
+      <div
+        :if={@has_children && !@collapsed}
+        class="border-l-2"
+        style={"margin-left: #{18 + @depth * 20}px; border-color: #{@depth_color}"}
+      >
         <.tree_node
           :for={child <- @children}
           item={child}
@@ -592,6 +658,47 @@ defmodule LoomkinWeb.DecisionGraphComponent do
             <.icon name="hero-x-mark" class="w-5 h-5" />
           </button>
         </div>
+      </div>
+
+      <%!-- Node type toggle buttons (fullscreen) --%>
+      <div class="px-4 py-2 border-b border-gray-800 flex flex-wrap gap-1">
+        <button
+          phx-click="show_all_types"
+          phx-target={@myself}
+          class={[
+            "px-2 py-1 text-xs rounded-full border transition-colors",
+            if(MapSet.size(@visible_types) == 7,
+              do: "border-violet-400 text-violet-400 bg-violet-400/10",
+              else: "border-gray-700 text-gray-400 hover:border-gray-500"
+            )
+          ]}
+        >
+          All
+        </button>
+        <button
+          :for={type <- [:goal, :decision, :action, :option, :outcome, :observation, :revisit]}
+          phx-click="toggle_type"
+          phx-value-type={type}
+          phx-target={@myself}
+          class={[
+            "px-2 py-1 text-xs rounded-full border flex items-center gap-1 transition-colors",
+            if(MapSet.member?(@visible_types, type),
+              do: "border-current bg-current/10",
+              else: "border-gray-700 text-gray-400 hover:border-gray-500"
+            )
+          ]}
+          style={
+            if MapSet.member?(@visible_types, type),
+              do: "color: #{type_color(type)}",
+              else: ""
+          }
+        >
+          <span
+            class="inline-block w-2 h-2 rounded-full"
+            style={"background-color: #{type_color(type)}"}
+          />
+          {type}
+        </button>
       </div>
 
       <div class="flex-1 overflow-auto p-4 relative">
@@ -934,6 +1041,74 @@ defmodule LoomkinWeb.DecisionGraphComponent do
     """
   end
 
+  defp inline_node_detail(assigns) do
+    node = assigns.node
+
+    connected_edges =
+      Enum.filter(assigns.edges, fn e ->
+        e.from_node_id == node.id or e.to_node_id == node.id
+      end)
+
+    assigns = assign(assigns, :connected_edges, connected_edges)
+
+    ~H"""
+    <div
+      class="mx-2 my-1 bg-gray-900 border border-gray-700/50 rounded-lg shadow-lg overflow-hidden"
+      style={"margin-left: #{18 + @depth * 20}px"}
+    >
+      <div class="flex items-center justify-between px-3 py-2 border-b border-gray-800 bg-gray-900/80">
+        <span class="text-xs font-semibold text-gray-200 truncate">{@node.title}</span>
+        <button
+          phx-click="close_detail"
+          phx-target={@myself}
+          class="text-gray-500 hover:text-gray-300 ml-2 p-0.5 rounded hover:bg-gray-800 transition-colors"
+        >
+          <.icon name="hero-x-mark-mini" class="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div class="px-3 py-2.5 space-y-2 text-xs">
+        <div class="flex gap-2">
+          <span class="text-gray-500">Type:</span>
+          <span class="text-gray-300 bg-gray-800/60 rounded px-1.5 py-0.5">
+            {Atom.to_string(@node.node_type)}
+          </span>
+        </div>
+        <div class="flex gap-2">
+          <span class="text-gray-500">Status:</span>
+          <span class={status_text_class(@node.status)}>{Atom.to_string(@node.status)}</span>
+        </div>
+        <div :if={@node.agent_name} class="flex gap-2 items-center">
+          <span class="text-gray-500">Agent:</span>
+          <span class="flex items-center gap-1">
+            <span
+              class="inline-block w-2 h-2 rounded-full"
+              style={"background-color: #{agent_color(@node.agent_name)}"}
+            />
+            <span style={"color: #{agent_color(@node.agent_name)}"}>{@node.agent_name}</span>
+          </span>
+        </div>
+        <div :if={@node.confidence} class="flex gap-2">
+          <span class="text-gray-500">Confidence:</span>
+          <span class="text-gray-300">{@node.confidence}%</span>
+        </div>
+        <div :if={@node.description} class="pt-1">
+          <span class="text-gray-500 block mb-1">Description:</span>
+          <p class="text-gray-400 leading-relaxed">{@node.description}</p>
+        </div>
+        <div :if={@connected_edges != []} class="pt-1">
+          <span class="text-gray-500 block mb-1">Connections:</span>
+          <div :for={edge <- @connected_edges} class="flex items-center gap-1 text-gray-400 py-0.5">
+            <span class={edge_text_class(edge.edge_type)}>{Atom.to_string(edge.edge_type)}</span>
+            <span>&rarr;</span>
+            <span>{find_connected_title(edge, @node, @nodes)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   # ──────────────────────────────────────────────
   # Tree building
   # ──────────────────────────────────────────────
@@ -1081,6 +1256,15 @@ defmodule LoomkinWeb.DecisionGraphComponent do
   defp status_text_class(:abandoned), do: "text-red-400"
   defp status_text_class(_), do: "text-gray-400"
 
+  defp type_color(:goal), do: "#facc15"
+  defp type_color(:decision), do: "#a78bfa"
+  defp type_color(:action), do: "#60a5fa"
+  defp type_color(:option), do: "#34d399"
+  defp type_color(:outcome), do: "#f472b6"
+  defp type_color(:observation), do: "#fb923c"
+  defp type_color(:revisit), do: "#f87171"
+  defp type_color(_), do: "#71717a"
+
   defp edge_text_class(:chosen), do: "text-green-400"
   defp edge_text_class(:rejected), do: "text-red-400"
   defp edge_text_class(:supersedes), do: "text-orange-400"
@@ -1126,8 +1310,15 @@ defmodule LoomkinWeb.DecisionGraphComponent do
   end
 
   defp recompute_visible(socket, agent_filter) do
-    {visible_nodes, visible_edges} =
+    recompute_visible(socket, agent_filter, socket.assigns.visible_types)
+  end
+
+  defp recompute_visible(socket, agent_filter, visible_types) do
+    {nodes_after_agent, edges_after_agent} =
       apply_agent_filter(socket.assigns.nodes, socket.assigns.edges, agent_filter)
+
+    {visible_nodes, visible_edges} =
+      apply_type_filter(nodes_after_agent, edges_after_agent, visible_types)
 
     positioned = layout_nodes(visible_nodes)
     {svg_w, svg_h} = compute_svg_dimensions(positioned)
@@ -1135,6 +1326,7 @@ defmodule LoomkinWeb.DecisionGraphComponent do
 
     assign(socket,
       agent_filter: agent_filter,
+      visible_types: visible_types,
       positioned: positioned,
       visible_edges: visible_edges,
       tree: tree,
@@ -1156,6 +1348,19 @@ defmodule LoomkinWeb.DecisionGraphComponent do
 
   defp apply_agent_filter(nodes, edges, agent_name) do
     filtered_nodes = Enum.filter(nodes, &(&1.agent_name == agent_name))
+    filtered_ids = MapSet.new(filtered_nodes, & &1.id)
+
+    filtered_edges =
+      Enum.filter(edges, fn e ->
+        MapSet.member?(filtered_ids, e.from_node_id) and
+          MapSet.member?(filtered_ids, e.to_node_id)
+      end)
+
+    {filtered_nodes, filtered_edges}
+  end
+
+  defp apply_type_filter(nodes, edges, visible_types) do
+    filtered_nodes = Enum.filter(nodes, &MapSet.member?(visible_types, &1.node_type))
     filtered_ids = MapSet.new(filtered_nodes, & &1.id)
 
     filtered_edges =
