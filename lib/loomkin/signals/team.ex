@@ -176,6 +176,16 @@ defmodule Loomkin.Signals.Team do
       ]
   end
 
+  defmodule TaskResumed do
+    use Jido.Signal,
+      type: "team.task.resumed",
+      schema: [
+        task_id: [type: :string, required: true],
+        owner: [type: :string, required: true],
+        team_id: [type: :string, required: true]
+      ]
+  end
+
   defmodule RendezvousCreated do
     use Jido.Signal,
       type: "team.rendezvous.created",

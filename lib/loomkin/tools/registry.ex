@@ -29,7 +29,8 @@ defmodule Loomkin.Tools.Registry do
     Loomkin.Tools.PeerEmitMilestone,
     Loomkin.Tools.PeerAddDependency,
     Loomkin.Tools.PeerUpdateTaskStatus,
-    Loomkin.Tools.PeerSignalReady
+    Loomkin.Tools.PeerSignalReady,
+    Loomkin.Tools.PeerResumeTask
   ]
 
   @lead_tools [

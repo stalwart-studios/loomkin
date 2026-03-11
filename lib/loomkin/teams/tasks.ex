@@ -167,24 +167,82 @@ defmodule Loomkin.Teams.Tasks do
     end
   end
 
-  def mark_partially_complete(task_id, partial_result) do
+  def mark_partially_complete(task_id, partial_result) when is_binary(partial_result) do
+    mark_partially_complete(task_id, %{output: partial_result})
+  end
+
+  def mark_partially_complete(task_id, partial_data) when is_map(partial_data) do
     task = get_task!(task_id)
 
     if task.status != :in_progress do
       {:error, :invalid_transition}
     else
+      completed_items =
+        Map.get(partial_data, :completed_items) || Map.get(partial_data, "completed_items")
+
+      total_items =
+        Map.get(partial_data, :total_items) || Map.get(partial_data, "total_items")
+
+      output =
+        Map.get(partial_data, :output) || Map.get(partial_data, "output") || ""
+
+      partial_results = %{
+        "completed_items" => completed_items,
+        "total_items" => total_items,
+        "output" => output,
+        "next_steps" => Map.get(partial_data, :next_steps) || Map.get(partial_data, "next_steps")
+      }
+
+      summary =
+        if completed_items && total_items do
+          "#{completed_items}/#{total_items} items complete. #{output}"
+        else
+          to_string(output)
+        end
+
+      attrs = %{
+        status: :partially_complete,
+        result: summary,
+        partial_results: partial_results,
+        completed_items: completed_items,
+        total_items: total_items
+      }
+
       task
-      |> TeamTask.changeset(%{status: :partially_complete, result: partial_result})
+      |> TeamTask.changeset(attrs)
       |> Repo.update()
       |> tap_ok(fn task ->
         Comms.broadcast_task_event(
           task.team_id,
-          {:task_partially_complete, task.id, task.owner, partial_result}
+          {:task_partially_complete, task.id, task.owner, partial_results}
         )
 
         Context.cache_task(task.team_id, task.id, %{
           title: task.title,
           status: :partially_complete,
+          owner: task.owner
+        })
+
+        auto_schedule_unblocked(task.team_id)
+      end)
+    end
+  end
+
+  def resume_task(task_id) do
+    task = get_task!(task_id)
+
+    if task.status != :partially_complete do
+      {:error, :invalid_transition}
+    else
+      task
+      |> TeamTask.changeset(%{status: :in_progress})
+      |> Repo.update()
+      |> tap_ok(fn task ->
+        Comms.broadcast_task_event(task.team_id, {:task_resumed, task.id, task.owner})
+
+        Context.cache_task(task.team_id, task.id, %{
+          title: task.title,
+          status: :in_progress,
           owner: task.owner
         })
       end)
@@ -224,14 +282,34 @@ defmodule Loomkin.Teams.Tasks do
   Returns `[%{task_id: id, title: title, result: result}]`.
   """
   def get_predecessor_outputs(task_id) do
-    Repo.all(
-      from d in TeamTaskDep,
-        join: dep in TeamTask,
-        on: d.depends_on_id == dep.id,
-        where:
-          d.task_id == ^task_id and d.dep_type == :requires_output and dep.status == :completed,
-        select: %{task_id: dep.id, title: dep.title, result: dep.result}
-    )
+    completed =
+      Repo.all(
+        from d in TeamTaskDep,
+          join: dep in TeamTask,
+          on: d.depends_on_id == dep.id,
+          where:
+            d.task_id == ^task_id and d.dep_type == :requires_output and dep.status == :completed,
+          select: %{task_id: dep.id, title: dep.title, result: dep.result}
+      )
+
+    partial =
+      Repo.all(
+        from d in TeamTaskDep,
+          join: dep in TeamTask,
+          on: d.depends_on_id == dep.id,
+          where:
+            d.task_id == ^task_id and d.dep_type == :requires_output and
+              dep.status == :partially_complete,
+          select: %{
+            task_id: dep.id,
+            title: dep.title,
+            result: dep.result,
+            partial_results: dep.partial_results,
+            partial: true
+          }
+      )
+
+    completed ++ partial
   end
 
   @doc """
@@ -484,10 +562,8 @@ defmodule Loomkin.Teams.Tasks do
   end
 
   defp blocked_task_ids(team_id) do
-    blocking_types = [:blocks, :requires_output]
-
-    # Tasks blocked by incomplete :blocks or :requires_output deps
-    task_blocked =
+    # :blocks deps only unblock when predecessor is :completed
+    blocks_blocked =
       Repo.all(
         from d in TeamTaskDep,
           join: t in TeamTask,
@@ -495,8 +571,23 @@ defmodule Loomkin.Teams.Tasks do
           join: dep in TeamTask,
           on: d.depends_on_id == dep.id,
           where:
-            t.team_id == ^team_id and d.dep_type in ^blocking_types and
+            t.team_id == ^team_id and d.dep_type == :blocks and
               dep.status != :completed and is_nil(d.milestone_name),
+          select: d.task_id,
+          distinct: true
+      )
+
+    # :requires_output deps unblock when predecessor is :completed OR :partially_complete
+    requires_output_blocked =
+      Repo.all(
+        from d in TeamTaskDep,
+          join: t in TeamTask,
+          on: d.task_id == t.id,
+          join: dep in TeamTask,
+          on: d.depends_on_id == dep.id,
+          where:
+            t.team_id == ^team_id and d.dep_type == :requires_output and
+              dep.status not in [:completed, :partially_complete] and is_nil(d.milestone_name),
           select: d.task_id,
           distinct: true
       )
@@ -516,7 +607,7 @@ defmodule Loomkin.Teams.Tasks do
           distinct: true
       )
 
-    Enum.uniq(task_blocked ++ milestone_blocked)
+    Enum.uniq(blocks_blocked ++ requires_output_blocked ++ milestone_blocked)
   end
 
   defp auto_schedule_unblocked(team_id) do

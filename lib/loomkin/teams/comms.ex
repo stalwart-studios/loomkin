@@ -285,6 +285,16 @@ defmodule Loomkin.Teams.Comms do
     |> Signals.publish()
   end
 
+  def broadcast_task_event(team_id, {:task_resumed, task_id, owner}) do
+    Loomkin.Signals.Team.TaskResumed.new!(%{
+      task_id: task_id,
+      owner: to_string(owner),
+      team_id: team_id
+    })
+    |> Causality.attach(team_id: team_id, agent_name: to_string(owner), task_id: task_id)
+    |> Signals.publish()
+  end
+
   def broadcast_task_event(team_id, {:task_partially_complete, task_id, owner, partial_result}) do
     signal =
       Loomkin.Signals.Team.TaskPartiallyComplete.new!(%{

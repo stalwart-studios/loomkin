@@ -30,11 +30,14 @@ defmodule Loomkin.Schemas.TeamTask do
     field :tokens_used, :integer, default: 0
     field :milestones_emitted, {:array, :string}, default: []
     field :milestones_required, {:array, :string}, default: []
+    field :completed_items, :integer
+    field :total_items, :integer
+    field :partial_results, :map
     timestamps(type: :utc_datetime)
   end
 
   @required_fields ~w(team_id title status)a
-  @optional_fields ~w(description owner priority model_hint result cost_usd tokens_used milestones_emitted milestones_required)a
+  @optional_fields ~w(description owner priority model_hint result cost_usd tokens_used milestones_emitted milestones_required completed_items total_items partial_results)a
 
   def changeset(task, attrs) do
     task
