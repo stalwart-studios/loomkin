@@ -110,7 +110,9 @@ defmodule Loomkin.Tools.TeamSpawn do
             end
 
           {:custom, role_desc} ->
-            case Role.generate(role_desc) do
+            generate_opts = fast_model_opts(session_id)
+
+            case Role.generate(role_desc, generate_opts) do
               {:ok, %Role{} = role_config} ->
                 custom_opts = Keyword.put(spawn_opts, :role_config, role_config)
 
@@ -226,6 +228,15 @@ defmodule Loomkin.Tools.TeamSpawn do
         nil
     end
   end
+
+  defp fast_model_opts(session_id) when is_binary(session_id) do
+    case Loomkin.Session.Manager.find_session(session_id) do
+      {:ok, pid} -> [model: Loomkin.Session.get_fast_model(pid)]
+      :error -> []
+    end
+  end
+
+  defp fast_model_opts(_), do: []
 
   defp format_personal_manifest(my_name, team_name, purpose, teammates) do
     teammate_lines =

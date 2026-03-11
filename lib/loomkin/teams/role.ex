@@ -860,7 +860,7 @@ defmodule Loomkin.Teams.Role do
   """
   @spec generate(String.t(), keyword()) :: {:ok, t()} | {:error, term()}
   def generate(task_description, opts \\ []) do
-    model = Loomkin.Teams.ModelRouter.default_model()
+    model = Keyword.get(opts, :model) || Loomkin.Teams.ModelRouter.default_model()
     catalog = build_tool_catalog()
     team_context = Keyword.get(opts, :team_context, "")
 
