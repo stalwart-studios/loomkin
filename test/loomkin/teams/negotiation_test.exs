@@ -7,11 +7,16 @@ defmodule Loomkin.Teams.NegotiationTest do
   alias Loomkin.Teams.Tasks
 
   setup do
+    # Ensure nervous system doesn't auto-start Negotiation (avoids via name conflict)
+    prev = Application.get_env(:loomkin, :start_nervous_system, false)
+    Application.put_env(:loomkin, :start_nervous_system, false)
+
     {:ok, team_id} = Manager.create_team(name: "negotiation-test")
     start_supervised!({Negotiation, team_id: team_id})
     Comms.subscribe(team_id, "listener")
 
     on_exit(fn ->
+      Application.put_env(:loomkin, :start_nervous_system, prev)
       Loomkin.Teams.TableRegistry.delete_table(team_id)
     end)
 

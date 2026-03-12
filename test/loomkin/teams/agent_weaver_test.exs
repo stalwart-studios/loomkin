@@ -304,6 +304,10 @@ defmodule Loomkin.Teams.AgentWeaverTest do
 
       {:ok, team_id} = Manager.create_team(name: "rebalancer-weaver-test")
 
+      # Register agents in Context so coordination_role? can detect weaver's role
+      Loomkin.Teams.Context.register_agent(team_id, "weaver", %{role: :weaver, status: :working})
+      Loomkin.Teams.Context.register_agent(team_id, "coder-1", %{role: :coder, status: :working})
+
       {:ok, pid} =
         start_supervised(
           {Loomkin.Teams.Rebalancer, team_id: team_id, check_interval: 100_000},

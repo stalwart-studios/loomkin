@@ -182,7 +182,9 @@ defmodule LoomkinWeb.DecisionGraphComponentTest do
         })
 
       assert html =~ "New Decision"
-      assert html =~ "graph-node-new"
+
+      # In compact tree view, new nodes get bg-gray-800/30 highlight (not graph-node-new SVG class)
+      assert html =~ "bg-gray-800/30"
     end
   end
 end

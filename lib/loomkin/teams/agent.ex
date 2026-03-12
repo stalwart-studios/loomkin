@@ -1077,7 +1077,7 @@ defmodule Loomkin.Teams.Agent do
             send(agent_pid, {:loop_resumed, result})
           end)
 
-          {:noreply, state}
+          {:noreply, %{state | pending_permission: nil}}
         end
     end
   end

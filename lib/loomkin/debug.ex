@@ -1,4 +1,6 @@
 defmodule Loomkin.Debug do
+  require Logger
+
   @moduledoc """
   Pre-built debugging helpers for runtime introspection via Tidewave's `project_eval` MCP tool.
 
@@ -168,11 +170,8 @@ defmodule Loomkin.Debug do
       id,
       event_name,
       fn event, measurements, metadata, _config ->
-        IO.inspect(
-          %{event: event, measurements: measurements, metadata: metadata},
-          label: "[#{label}]",
-          limit: :infinity,
-          printable_limit: 4096
+        Logger.debug(
+          "[#{label}] #{inspect(%{event: event, measurements: measurements, metadata: metadata}, limit: :infinity, printable_limit: 4096)}"
         )
       end,
       nil
