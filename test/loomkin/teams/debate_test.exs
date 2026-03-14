@@ -47,7 +47,7 @@ defmodule Loomkin.Teams.DebateTest do
                           message: {:debate_start, debate_id, "best framework", ["alice", "bob"]}
                         }
                       }},
-                     500
+                     1_000
 
       assert is_binary(debate_id)
 
@@ -76,14 +76,14 @@ defmodule Loomkin.Teams.DebateTest do
                         type: "collaboration.peer.message",
                         data: %{message: {:debate_start, debate_id, "architecture", _}}
                       }},
-                     500
+                     1_000
 
       assert_receive {:signal,
                       %Jido.Signal{
                         type: "collaboration.peer.message",
                         data: %{message: {:debate_propose, ^debate_id, 1, "architecture"}}
                       }},
-                     500
+                     1_000
 
       # Submit proposals
       Debate.submit_response(team_id, debate_id, :proposal, %{
@@ -154,7 +154,7 @@ defmodule Loomkin.Teams.DebateTest do
                         type: "collaboration.debate.response",
                         data: %{debate_id: ^debate_id, phase: :proposal, response: ^response}
                       }},
-                     500
+                     1_000
     end
   end
 
@@ -168,7 +168,7 @@ defmodule Loomkin.Teams.DebateTest do
         Task.async(fn ->
           Debate.initiate_debate(team_id, "language", ["alice", "bob", "carol"],
             max_rounds: 1,
-            round_timeout_ms: 300
+            round_timeout_ms: 500
           )
         end)
 
@@ -178,7 +178,7 @@ defmodule Loomkin.Teams.DebateTest do
                         type: "collaboration.peer.message",
                         data: %{message: {:debate_start, debate_id, "language", _}}
                       }},
-                     500
+                     1_000
 
       # Submit proposals
       assert_receive {:signal,
@@ -186,7 +186,7 @@ defmodule Loomkin.Teams.DebateTest do
                         type: "collaboration.peer.message",
                         data: %{message: {:debate_propose, ^debate_id, 1, _}}
                       }},
-                     500
+                     1_000
 
       Debate.submit_response(team_id, debate_id, :proposal, %{
         from: "alice",

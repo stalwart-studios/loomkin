@@ -243,6 +243,42 @@ defmodule Loomkin.Teams.Role do
                Loomkin.Tools.LspDiagnostics
              ] ++ @lead_tools ++ @peer_tools ++ @cross_team_tools
 
+  # Orchestrator mode: Lead agents with specialists get this restricted set.
+  # Read-only observation + coordination + delegation. No write/shell/git.
+  @orchestrator_tools @read_only_tools ++
+                        @lead_tools ++
+                        @peer_tools ++
+                        @cross_team_tools ++
+                        @decision_tools ++
+                        [
+                          Loomkin.Tools.CollectiveDecision,
+                          Loomkin.Tools.MergeGraph
+                        ]
+
+  @orchestrator_prompt_addition """
+  You are operating in orchestrator mode. Your team has specialists who handle implementation.
+  Your job is to:
+  - Break work into bounded tasks and assign them to the right specialist
+  - Monitor progress via team_progress and peer messages
+  - Make strategic decisions about approach and priorities
+  - Compose results from completed work into next steps
+  - Escalate to the user when decisions require human judgment
+
+  You can READ files to understand the codebase, but you cannot EDIT files, run commands, or make direct changes.
+  Delegate all implementation work to your team members.
+
+  IMPORTANT: If you need something done that requires writing files, running shell commands, or
+  making git operations — spawn or assign a specialist to do it. You have team_spawn and
+  team_smart_assign for this purpose. Never stall because you lack a tool — delegate instead.
+
+  When completing tasks, use peer_complete_task with structured fields (actions_taken, discoveries,
+  files_changed, decisions_made, open_questions) so dependent tasks receive rich context about
+  what was accomplished.
+  """
+
+  def orchestrator_tools, do: @orchestrator_tools
+  def orchestrator_prompt_addition, do: @orchestrator_prompt_addition
+
   @tool_name_to_module %{
     "file_read" => Loomkin.Tools.FileRead,
     "file_write" => Loomkin.Tools.FileWrite,
@@ -645,6 +681,12 @@ defmodule Loomkin.Teams.Role do
       - Log implementation decisions (node_type: "decision") with confidence and rationale
       - Log completed work as outcomes (node_type: "outcome") linked to the parent action
       - If an approach fails, use pivot_decision to record why and what you're trying next
+
+      ## Task Completion
+      When finishing a task with peer_complete_task, include structured fields so dependent
+      tasks receive rich context: actions_taken (what you did), discoveries (what you learned),
+      files_changed (paths modified), decisions_made (choices and rationale), and open_questions
+      (unresolved issues). This helps the next agent pick up where you left off.
 
       ## Team Manifest
       {team_manifest}

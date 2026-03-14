@@ -3142,6 +3142,12 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, socket |> forward_to_activity(event) |> forward_to_cards_and_comms(event)}
   end
 
+  def handle_info({:tasks_unblocked, task_ids, _predecessor_outputs}, socket) do
+    # Normalize 3-tuple to 2-tuple for activity feed (UI doesn't need predecessor details)
+    event = {:tasks_unblocked, task_ids}
+    {:noreply, socket |> forward_to_activity(event) |> forward_to_cards_and_comms(event)}
+  end
+
   def handle_info({:tasks_unblocked, _task_ids} = event, socket) do
     {:noreply, socket |> forward_to_activity(event) |> forward_to_cards_and_comms(event)}
   end
