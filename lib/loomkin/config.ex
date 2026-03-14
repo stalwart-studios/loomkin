@@ -141,9 +141,11 @@ defmodule Loomkin.Config do
   @doc """
   Serialize current ETS config to `.loomkin.toml` at the given project path.
 
-  Strips internal keys (`:project_path`) before writing. Publishes a
-  `system.config.loaded` signal so running agents pick up changes.
+  Strips internal-only keys (`:project_path`) and sensitive keys (`:auth`,
+  `:channels`) before writing. Publishes a `system.config.loaded` signal so
+  running agents pick up changes.
   """
+  @spec save_to_file(String.t()) :: :ok | {:error, term()}
   def save_to_file(project_path) do
     GenServer.call(__MODULE__, {:save_to_file, project_path})
   end
@@ -255,12 +257,16 @@ defmodule Loomkin.Config do
 
     toml_path = Path.join(project_path, ".loomkin.toml")
     content = Loomkin.Config.TomlWriter.encode(config)
-    File.write!(toml_path, content)
 
-    signal = Loomkin.Signals.System.ConfigLoaded.new!(%{}, subject: project_path)
-    Loomkin.Signals.publish(signal)
+    case File.write(toml_path, content) do
+      :ok ->
+        signal = Loomkin.Signals.System.ConfigLoaded.new!(%{}, subject: project_path)
+        Loomkin.Signals.publish(signal)
+        {:reply, :ok, state}
 
-    {:reply, :ok, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   # --- Helpers ---

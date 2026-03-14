@@ -102,7 +102,7 @@ defmodule LoomkinWeb.SettingsComponents do
   attr :tab, :string, required: true
   attr :sections, :map, required: true
   attr :values, :map, required: true
-  attr :dirty, :map, required: true
+  attr :dirty, :any, required: true
   attr :errors, :map, required: true
 
   def settings_tab(assigns) do
@@ -123,7 +123,7 @@ defmodule LoomkinWeb.SettingsComponents do
   attr :section, :string, required: true
   attr :settings, :list, required: true
   attr :values, :map, required: true
-  attr :dirty, :map, required: true
+  attr :dirty, :any, required: true
   attr :errors, :map, required: true
 
   def settings_section(assigns) do

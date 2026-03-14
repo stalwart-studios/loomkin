@@ -7,12 +7,14 @@ defmodule LoomkinWeb.SettingsLive do
   def mount(_params, _session, socket) do
     values = Registry.current_values()
     tabs = Registry.tabs()
+    active_tab = List.first(tabs)
 
     {:ok,
      assign(socket,
        page_title: "Loomkin - Settings",
-       active_tab: List.first(tabs),
+       active_tab: active_tab,
        tabs: tabs,
+       sections: Registry.by_tab(active_tab),
        values: values,
        original_values: values,
        dirty: MapSet.new(),
@@ -21,7 +23,7 @@ defmodule LoomkinWeb.SettingsLive do
   end
 
   def handle_event("switch_tab", %{"tab" => tab}, socket) do
-    {:noreply, assign(socket, active_tab: tab)}
+    {:noreply, assign(socket, active_tab: tab, sections: Registry.by_tab(tab))}
   end
 
   def handle_event("update_setting", params, socket) do
@@ -73,16 +75,25 @@ defmodule LoomkinWeb.SettingsLive do
           path -> path
         end
 
-      Loomkin.Config.save_to_file(project_path)
+      case Loomkin.Config.save_to_file(project_path) do
+        :ok ->
+          values = Registry.current_values()
 
-      values = Registry.current_values()
+          socket =
+            socket
+            |> assign(
+              values: values,
+              original_values: values,
+              dirty: MapSet.new(),
+              errors: %{}
+            )
+            |> put_flash(:info, "Settings saved")
 
-      socket =
-        socket
-        |> assign(values: values, original_values: values, dirty: MapSet.new(), errors: %{})
-        |> put_flash(:info, "Settings saved")
+          {:noreply, socket}
 
-      {:noreply, socket}
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Failed to save: #{inspect(reason)}")}
+      end
     end
   end
 
@@ -180,9 +191,6 @@ defmodule LoomkinWeb.SettingsLive do
   end
 
   def render(assigns) do
-    sections = Registry.by_tab(assigns.active_tab)
-    assigns = assign(assigns, :sections, sections)
-
     ~H"""
     <.settings_layout
       active_tab={@active_tab}
