@@ -14,23 +14,34 @@ defmodule Loomkin.Skills.Resolver do
   alias Loomkin.Schemas.Snippet
   alias Loomkin.Social
 
-  @doc """
-  Loads skills from the `.agents/skills` directory within `project_path`
-  into the Jido registry.
+  @skill_directories [
+    ".agents/skills",
+    ".claude/skills",
+    ".windsurf/skills",
+    ".cursor/skills"
+  ]
 
-  Returns `{:ok, count}` or `{:error, reason}`.
+  @doc """
+  Loads skills from all known agent skill directories within `project_path`
+  into the Jido registry. Scans `.agents/skills`, `.claude/skills`,
+  `.windsurf/skills`, and `.cursor/skills`.
+
+  Returns `{:ok, count}`.
   """
   @spec load_from_disk(String.t()) :: {:ok, non_neg_integer()}
   def load_from_disk(project_path) do
-    skills_path = Path.join(project_path, ".agents/skills")
+    skill_paths =
+      @skill_directories
+      |> Enum.map(&Path.join(project_path, &1))
+      |> Enum.filter(&File.dir?/1)
 
-    if File.dir?(skills_path) do
-      case SkillRegistry.load_from_paths([skills_path]) do
+    if skill_paths != [] do
+      case SkillRegistry.load_from_paths(skill_paths) do
         {:ok, count} ->
           {:ok, count}
 
         {:error, reason} ->
-          Logger.warning("[Skills] Failed to load skills from #{skills_path}: #{inspect(reason)}")
+          Logger.warning("[Skills] Failed to load skills from disk: #{inspect(reason)}")
           {:ok, 0}
       end
     else
