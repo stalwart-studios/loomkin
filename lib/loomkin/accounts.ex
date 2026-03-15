@@ -61,6 +61,13 @@ defmodule Loomkin.Accounts do
   def get_user!(id), do: Repo.get!(User, id)
 
   @doc """
+  Gets a user by username. Returns nil if no user exists with that username.
+  """
+  def get_user_by_username(username) when is_binary(username) do
+    Repo.get_by(User, username: username)
+  end
+
+  @doc """
   Gets a user by username.
 
   Raises `Ecto.NoResultsError` if no user exists with that username.
@@ -85,7 +92,7 @@ defmodule Loomkin.Accounts do
   """
   def register_user(attrs) do
     %User{}
-    |> User.email_changeset(attrs)
+    |> User.registration_changeset(attrs)
     |> Repo.insert()
   end
 

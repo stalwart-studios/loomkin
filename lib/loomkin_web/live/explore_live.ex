@@ -11,10 +11,6 @@ defmodule LoomkinWeb.ExploreLive do
   alias Loomkin.Social
 
   def mount(_params, _session, socket) do
-    snippets =
-      Social.list_public_snippets(limit: 20, sort: :recent)
-      |> Repo.preload(:user)
-
     socket =
       socket
       |> assign(
@@ -23,7 +19,17 @@ defmodule LoomkinWeb.ExploreLive do
         active_type: :all,
         sort_by: :recent
       )
-      |> stream(:snippets, snippets, dom_id: &snippet_dom_id/1)
+
+    socket =
+      if connected?(socket) do
+        snippets =
+          Social.list_public_snippets(limit: 20, sort: :recent)
+          |> Repo.preload(:user)
+
+        stream(socket, :snippets, snippets, dom_id: &snippet_dom_id/1)
+      else
+        stream(socket, :snippets, [], dom_id: &snippet_dom_id/1)
+      end
 
     {:ok, socket}
   end

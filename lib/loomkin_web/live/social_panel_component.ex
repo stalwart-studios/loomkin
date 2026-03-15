@@ -9,9 +9,7 @@ defmodule LoomkinWeb.SocialPanelComponent do
 
   Only renders in multi_tenant (deployed) mode.
   """
-  use Phoenix.Component
-
-  import LoomkinWeb.CoreComponents
+  use LoomkinWeb, :html
 
   attr :open, :boolean, required: true
   attr :live_friends, :list, required: true
@@ -114,7 +112,7 @@ defmodule LoomkinWeb.SocialPanelComponent do
           />
         <% else %>
           <span class="w-5 h-5 rounded-full bg-surface-3 flex items-center justify-center text-[9px] font-bold text-gray-400">
-            {String.first(@friend[:username] || "?") |> String.upcase()}
+            {((@friend[:username] || "?") |> String.first() || "?") |> String.upcase()}
           </span>
         <% end %>
         <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-surface-1" />

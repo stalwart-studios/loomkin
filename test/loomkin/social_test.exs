@@ -58,25 +58,33 @@ defmodule Loomkin.SocialTest do
     end
   end
 
-  describe "update_snippet/2" do
+  describe "update_snippet/3" do
     setup :create_user
 
     test "updates snippet fields and bumps version", %{user: user} do
       {:ok, snippet} = Social.create_snippet(user, snippet_attrs())
       assert snippet.version == 1
 
-      assert {:ok, updated} = Social.update_snippet(snippet, %{title: "Updated Title"})
+      assert {:ok, updated} = Social.update_snippet(user, snippet, %{title: "Updated Title"})
       assert updated.title == "Updated Title"
       assert updated.version == 2
     end
+
+    test "returns error when user does not own snippet", %{user: user} do
+      {:ok, snippet} = Social.create_snippet(user, snippet_attrs())
+      other_user = user_fixture()
+
+      assert {:error, :unauthorized} =
+               Social.update_snippet(other_user, snippet, %{title: "Hacked"})
+    end
   end
 
-  describe "delete_snippet/1" do
+  describe "delete_snippet/2" do
     setup :create_user
 
     test "deletes the snippet", %{user: user} do
       {:ok, snippet} = Social.create_snippet(user, snippet_attrs())
-      assert {:ok, _} = Social.delete_snippet(snippet)
+      assert {:ok, _} = Social.delete_snippet(user, snippet)
       assert_raise Ecto.NoResultsError, fn -> Social.get_snippet!(snippet.id) end
     end
   end
@@ -102,8 +110,12 @@ defmodule Loomkin.SocialTest do
 
       {:ok, snippet} = Social.create_snippet(user, snippet_attrs(%{title: "Slug Test"}))
 
-      found = Social.get_snippet_by_slug("testuser", snippet.slug)
+      # Owner can see their own private snippet
+      found = Social.get_snippet_by_slug("testuser", snippet.slug, user)
       assert found.id == snippet.id
+
+      # Non-owner cannot see private snippet
+      assert Social.get_snippet_by_slug("testuser", snippet.slug) == nil
     end
 
     test "returns nil for non-existent slug", %{user: _user} do
@@ -161,10 +173,16 @@ defmodule Loomkin.SocialTest do
 
     test "finds snippets by title", %{user: user} do
       {:ok, _} =
-        Social.create_snippet(user, snippet_attrs(%{title: "Elixir Expert", visibility: :public}))
+        Social.create_snippet(
+          user,
+          snippet_attrs(%{title: "Elixir Expert", visibility: :public, tags: ["beam"]})
+        )
 
       {:ok, _} =
-        Social.create_snippet(user, snippet_attrs(%{title: "Python Helper", visibility: :public}))
+        Social.create_snippet(
+          user,
+          snippet_attrs(%{title: "Python Helper", visibility: :public, tags: ["snake"]})
+        )
 
       results = Social.search_snippets("Elixir")
       assert length(results) == 1

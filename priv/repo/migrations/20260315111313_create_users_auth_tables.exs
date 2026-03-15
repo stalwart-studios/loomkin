@@ -12,7 +12,7 @@ defmodule Loomkin.Repo.Migrations.CreateUsersAuthTables do
       add :display_name, :string
       add :avatar_url, :string
 
-      timestamps()
+      timestamps(type: :utc_datetime)
     end
 
     create unique_index(:users, [:email])

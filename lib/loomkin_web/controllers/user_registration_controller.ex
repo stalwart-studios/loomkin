@@ -1,12 +1,14 @@
 defmodule LoomkinWeb.UserRegistrationController do
   use LoomkinWeb, :controller
 
+  import Phoenix.Component, only: [to_form: 1]
+
   alias Loomkin.Accounts
   alias Loomkin.Accounts.User
 
   def new(conn, _params) do
     changeset = Accounts.change_user_email(%User{})
-    render(conn, :new, changeset: changeset)
+    render(conn, :new, form: to_form(changeset))
   end
 
   def create(conn, %{"user" => user_params}) do
@@ -26,7 +28,7 @@ defmodule LoomkinWeb.UserRegistrationController do
         |> redirect(to: ~p"/users/log-in")
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        render(conn, :new, changeset: changeset)
+        render(conn, :new, form: to_form(changeset))
     end
   end
 end

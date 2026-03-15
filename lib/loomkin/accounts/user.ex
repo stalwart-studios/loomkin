@@ -12,7 +12,7 @@ defmodule Loomkin.Accounts.User do
     field :display_name, :string
     field :avatar_url, :string
 
-    timestamps()
+    timestamps(type: :utc_datetime)
   end
 
   @doc """

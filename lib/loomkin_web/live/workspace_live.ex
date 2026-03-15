@@ -96,7 +96,9 @@ defmodule LoomkinWeb.WorkspaceLive do
         # Social presence: online followed users
         live_friends: [],
         social_panel_open: false,
-        social_activity: []
+        social_activity: [],
+        # Cached set of followed user IDs for presence filtering (MapSet)
+        following_ids: MapSet.new()
       )
       |> stream(:comms_events, [], limit: -500)
 
@@ -248,7 +250,13 @@ defmodule LoomkinWeb.WorkspaceLive do
               })
 
               activity = Loomkin.Social.following_activity(user, limit: 10)
-              assign(socket, live_friends: build_live_friends(user), social_activity: activity)
+              following_ids = Loomkin.Social.list_following(user) |> MapSet.new(& &1.id)
+
+              assign(socket,
+                live_friends: build_live_friends(following_ids),
+                social_activity: activity,
+                following_ids: following_ids
+              )
             else
               socket
             end
@@ -3638,7 +3646,7 @@ defmodule LoomkinWeb.WorkspaceLive do
     user = scope && scope.user
 
     if user do
-      {:noreply, assign(socket, live_friends: build_live_friends(user))}
+      {:noreply, assign(socket, live_friends: build_live_friends(socket.assigns.following_ids))}
     else
       {:noreply, socket}
     end
@@ -6066,12 +6074,8 @@ defmodule LoomkinWeb.WorkspaceLive do
   defp restore_assign_string(socket, _key, _value), do: socket
 
   # Build the list of online users that the current user follows.
-  # Filters Presence data against the user's following list.
-  defp build_live_friends(user) do
-    following_ids =
-      Loomkin.Social.list_following(user)
-      |> MapSet.new(& &1.id)
-
+  # Filters Presence data against a pre-cached set of following IDs.
+  defp build_live_friends(following_ids) do
     LoomkinWeb.Presence.list_online_users()
     |> Enum.filter(&MapSet.member?(following_ids, &1.user_id))
   end

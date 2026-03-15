@@ -9,34 +9,45 @@ defmodule Loomkin.Social.SkillImporter do
     skills_dir = Path.join(project_path, ".agents/skills")
 
     if File.dir?(skills_dir) do
-      skills_dir
-      |> File.ls!()
-      |> Enum.filter(&File.dir?(Path.join(skills_dir, &1)))
-      |> Enum.map(fn dir ->
-        skill_path = Path.join([skills_dir, dir, "SKILL.md"])
+      case File.ls(skills_dir) do
+        {:ok, entries} ->
+          entries
+          |> Enum.filter(&File.dir?(Path.join(skills_dir, &1)))
+          |> Enum.map(fn dir ->
+            skill_path = Path.join([skills_dir, dir, "SKILL.md"])
 
-        if File.exists?(skill_path) do
-          {frontmatter, body} = parse_skill_md(skill_path)
+            if File.exists?(skill_path) do
+              case parse_skill_md(skill_path) do
+                {:ok, {frontmatter, body}} ->
+                  Social.create_snippet(user, %{
+                    title: frontmatter["name"] || dir,
+                    description: frontmatter["description"],
+                    type: :skill,
+                    content: %{"frontmatter" => frontmatter, "body" => body},
+                    visibility: :private
+                  })
 
-          Social.create_snippet(user, %{
-            title: frontmatter["name"] || dir,
-            description: frontmatter["description"],
-            type: :skill,
-            content: %{"frontmatter" => frontmatter, "body" => body},
-            visibility: :private
-          })
-        else
-          {:error, :no_skill_md}
-        end
-      end)
+                {:error, reason} ->
+                  {:error, reason}
+              end
+            else
+              {:error, :no_skill_md}
+            end
+          end)
+
+        {:error, reason} ->
+          {:error, {:ls_failed, reason}}
+      end
     else
       {:error, :skills_dir_not_found}
     end
   end
 
   def parse_skill_md(path) do
-    content = File.read!(path)
-    parse_skill_content(content)
+    case File.read(path) do
+      {:ok, content} -> {:ok, parse_skill_content(content)}
+      {:error, reason} -> {:error, {:read_failed, reason}}
+    end
   end
 
   def parse_skill_content(content) do

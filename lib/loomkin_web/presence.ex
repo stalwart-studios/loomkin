@@ -61,6 +61,6 @@ defmodule LoomkinWeb.Presence do
   """
   def online?(user_id) do
     list(@global_topic)
-    |> Map.has_key?(user_id)
+    |> Map.has_key?(to_string(user_id))
   end
 end

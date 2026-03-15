@@ -340,13 +340,11 @@ users = [alice, bob, carol, dave]
 
 for snippet <- created_snippets, snippet.visibility == :public do
   # Each snippet gets 1-4 random favorites
-  fans = Enum.take_random(users -- [Repo.preload(snippet, :user).user], Enum.random(1..3))
+  fans = Enum.take_random(Enum.reject(users, &(&1.id == snippet.user_id)), Enum.random(1..3))
 
   for fan <- fans do
-    try do
+    unless Social.favorited?(fan, snippet) do
       Social.toggle_favorite(fan, snippet)
-    rescue
-      _ -> :ok
     end
   end
 end

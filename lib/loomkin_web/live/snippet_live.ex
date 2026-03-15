@@ -22,41 +22,53 @@ defmodule LoomkinWeb.SnippetLive do
   end
 
   defp apply_action(socket, :show, %{"username" => username, "slug" => slug}) do
-    snippet =
-      Social.get_snippet_by_slug(username, slug)
-      |> Repo.preload([:user, :forked_from])
-
-    current_user =
+    viewer =
       if socket.assigns[:current_scope],
         do: socket.assigns.current_scope.user,
         else: nil
 
-    is_owner = current_user != nil and current_user.id == snippet.user_id
-    is_favorited = current_user != nil and Social.favorited?(current_user, snippet)
+    case Social.get_snippet_by_slug(username, slug, viewer) do
+      nil ->
+        socket
+        |> put_flash(:error, "Snippet not found.")
+        |> push_navigate(to: ~p"/explore")
 
-    owner_username =
-      if Ecto.assoc_loaded?(snippet.user),
-        do: snippet.user.username,
-        else: username
+      snippet ->
+        snippet = Repo.preload(snippet, [:user, forked_from: :user])
 
-    forked_from_username =
-      if snippet.forked_from_id && Ecto.assoc_loaded?(snippet.forked_from) && snippet.forked_from do
-        forked = Repo.preload(snippet.forked_from, :user)
+        current_user =
+          if socket.assigns[:current_scope],
+            do: socket.assigns.current_scope.user,
+            else: nil
 
-        if Ecto.assoc_loaded?(forked.user),
-          do: forked.user.username,
-          else: nil
-      end
+        is_owner = current_user != nil and current_user.id == snippet.user_id
+        is_favorited = current_user != nil and Social.favorited?(current_user, snippet)
 
-    socket
-    |> assign(
-      page_title: snippet.title,
-      snippet: snippet,
-      owner_username: owner_username,
-      forked_from_username: forked_from_username,
-      is_owner: is_owner,
-      is_favorited: is_favorited
-    )
+        owner_username =
+          if Ecto.assoc_loaded?(snippet.user),
+            do: snippet.user.username,
+            else: username
+
+        forked_from_username =
+          if snippet.forked_from_id && Ecto.assoc_loaded?(snippet.forked_from) &&
+               snippet.forked_from do
+            forked = snippet.forked_from
+
+            if Ecto.assoc_loaded?(forked.user),
+              do: forked.user.username,
+              else: nil
+          end
+
+        socket
+        |> assign(
+          page_title: snippet.title,
+          snippet: snippet,
+          owner_username: owner_username,
+          forked_from_username: forked_from_username,
+          is_owner: is_owner,
+          is_favorited: is_favorited
+        )
+    end
   end
 
   defp apply_action(socket, :new, _params) do
@@ -72,16 +84,36 @@ defmodule LoomkinWeb.SnippetLive do
 
   defp apply_action(socket, :edit, %{"id" => id}) do
     snippet = Social.get_snippet!(id)
+    current_user = socket.assigns.current_scope.user
 
-    changeset =
-      Snippet.changeset(snippet, %{})
+    if current_user.id != snippet.user_id do
+      socket
+      |> put_flash(:error, "You do not have permission to edit this snippet.")
+      |> push_navigate(to: ~p"/")
+    else
+      changeset = Snippet.changeset(snippet, %{})
 
-    socket
-    |> assign(
-      page_title: "Edit #{snippet.title}",
-      snippet: snippet,
-      form: to_form(changeset)
-    )
+      socket
+      |> assign(
+        page_title: "Edit #{snippet.title}",
+        snippet: snippet,
+        form: to_form(changeset)
+      )
+    end
+  end
+
+  def handle_event("fork", _params, %{assigns: %{current_scope: nil}} = socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Please log in to fork snippets.")
+     |> push_navigate(to: ~p"/users/log-in")}
+  end
+
+  def handle_event("fork", _params, %{assigns: %{current_scope: %{user: nil}}} = socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Please log in to fork snippets.")
+     |> push_navigate(to: ~p"/users/log-in")}
   end
 
   def handle_event("fork", _params, socket) do
@@ -98,6 +130,24 @@ defmodule LoomkinWeb.SnippetLive do
       {:error, _changeset} ->
         {:noreply, put_flash(socket, :error, "Could not fork snippet")}
     end
+  end
+
+  def handle_event("toggle_favorite", _params, %{assigns: %{current_scope: nil}} = socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Please log in to favorite snippets.")
+     |> push_navigate(to: ~p"/users/log-in")}
+  end
+
+  def handle_event(
+        "toggle_favorite",
+        _params,
+        %{assigns: %{current_scope: %{user: nil}}} = socket
+      ) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Please log in to favorite snippets.")
+     |> push_navigate(to: ~p"/users/log-in")}
   end
 
   def handle_event("toggle_favorite", _params, socket) do
@@ -158,7 +208,9 @@ defmodule LoomkinWeb.SnippetLive do
   defp update_snippet(socket, params) do
     snippet = socket.assigns.snippet
 
-    case Social.update_snippet(snippet, params) do
+    current_user = socket.assigns.current_scope.user
+
+    case Social.update_snippet(current_user, snippet, params) do
       {:ok, updated} ->
         updated = Repo.preload(updated, :user)
         username = updated.user.username

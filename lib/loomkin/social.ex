@@ -5,9 +5,9 @@ defmodule Loomkin.Social do
 
   import Ecto.Query
   alias Loomkin.Repo
-  alias Loomkin.Schemas.Snippet
   alias Loomkin.Schemas.Favorite
   alias Loomkin.Schemas.Follow
+  alias Loomkin.Schemas.Snippet
   alias Loomkin.Accounts.User
 
   # ---------------------------------------------------------------------------
@@ -21,27 +21,51 @@ defmodule Loomkin.Social do
     |> Repo.insert()
   end
 
-  def update_snippet(%Snippet{} = snippet, attrs) do
-    snippet
-    |> Snippet.changeset(attrs)
-    |> Ecto.Changeset.put_change(:version, snippet.version + 1)
-    |> Repo.update()
+  def update_snippet(user, %Snippet{} = snippet, attrs) do
+    if snippet.user_id != user.id do
+      {:error, :unauthorized}
+    else
+      snippet
+      |> Snippet.changeset(attrs)
+      |> Ecto.Changeset.optimistic_lock(:version)
+      |> Repo.update()
+    end
   end
 
-  def delete_snippet(%Snippet{} = snippet) do
-    Repo.delete(snippet)
+  def delete_snippet(user, %Snippet{} = snippet) do
+    if snippet.user_id != user.id do
+      {:error, :unauthorized}
+    else
+      Repo.delete(snippet)
+    end
   end
 
   def get_snippet!(id) do
-    Repo.get!(Snippet, id)
+    Repo.get!(Snippet, id) |> Repo.preload(:user)
   end
 
-  def get_snippet_by_slug(username, slug) do
-    from(s in Snippet,
-      join: u in assoc(s, :user),
-      where: u.username == ^username and s.slug == ^slug
-    )
-    |> Repo.one()
+  def get_snippet_by_slug(username, slug, viewer \\ nil) do
+    snippet =
+      from(s in Snippet,
+        join: u in assoc(s, :user),
+        where: u.username == ^username and s.slug == ^slug,
+        preload: [:user]
+      )
+      |> Repo.one()
+
+    case snippet do
+      nil ->
+        nil
+
+      %Snippet{visibility: :public} ->
+        snippet
+
+      %Snippet{visibility: :unlisted} ->
+        snippet
+
+      %Snippet{visibility: :private, user_id: owner_id} ->
+        if viewer && viewer.id == owner_id, do: snippet, else: nil
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -68,7 +92,7 @@ defmodule Loomkin.Social do
     offset = Keyword.get(opts, :offset, 0)
     sort = Keyword.get(opts, :sort, :recent)
 
-    from(s in Snippet, where: s.visibility == :public)
+    from(s in Snippet, where: s.visibility == :public, preload: [:user])
     |> maybe_filter_type(type)
     |> apply_sort(sort)
     |> limit(^limit)
@@ -79,13 +103,27 @@ defmodule Loomkin.Social do
   def search_snippets(query, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
     offset = Keyword.get(opts, :offset, 0)
-    pattern = "%#{query}%"
+
+    escaped =
+      query
+      |> String.replace("\\", "\\\\")
+      |> String.replace("%", "\\%")
+      |> String.replace("_", "\\_")
+
+    pattern = "%#{escaped}%"
 
     from(s in Snippet,
       where:
         s.visibility == :public and
-          (ilike(s.title, ^pattern) or ilike(s.description, ^pattern)),
-      order_by: [desc: s.inserted_at]
+          (ilike(s.title, ^pattern) or
+             ilike(s.description, ^pattern) or
+             fragment(
+               "EXISTS (SELECT 1 FROM unnest(?) AS tag WHERE tag ILIKE ?)",
+               s.tags,
+               ^pattern
+             )),
+      order_by: [desc: s.inserted_at],
+      preload: [:user]
     )
     |> limit(^limit)
     |> offset(^offset)
@@ -98,7 +136,7 @@ defmodule Loomkin.Social do
     since = DateTime.add(DateTime.utc_now(), -days, :day)
 
     from(s in Snippet,
-      where: s.visibility == :public and s.updated_at >= ^since,
+      where: s.visibility == :public and s.inserted_at >= ^since,
       order_by: [desc: s.favorite_count, desc: s.fork_count, desc: s.inserted_at]
     )
     |> limit(^limit)
@@ -120,41 +158,51 @@ defmodule Loomkin.Social do
       forked_from_id: snippet.id
     }
 
-    Repo.transact(fn ->
+    Repo.transaction(fn ->
       with {:ok, fork} <- create_snippet(user, attrs) do
         {1, _} =
           from(s in Snippet, where: s.id == ^snippet.id)
           |> Repo.update_all(inc: [fork_count: 1])
 
-        {:ok, fork}
+        fork
+      else
+        {:error, changeset} -> Repo.rollback(changeset)
       end
     end)
   end
 
   def toggle_favorite(user, %Snippet{} = snippet) do
-    case Repo.get_by(Favorite, user_id: user.id, snippet_id: snippet.id) do
-      nil ->
-        Repo.transact(fn ->
-          {:ok, favorite} =
-            %Favorite{}
-            |> Favorite.changeset(%{user_id: user.id, snippet_id: snippet.id})
-            |> Repo.insert()
+    result =
+      %Favorite{}
+      |> Ecto.Changeset.change()
+      |> Ecto.Changeset.put_change(:user_id, user.id)
+      |> Ecto.Changeset.put_change(:snippet_id, snippet.id)
+      |> Repo.insert(on_conflict: :nothing, conflict_target: [:user_id, :snippet_id])
 
-          from(s in Snippet, where: s.id == ^snippet.id)
-          |> Repo.update_all(inc: [favorite_count: 1])
+    case result do
+      {:ok, %Favorite{id: nil}} ->
+        Repo.transaction(fn ->
+          existing =
+            Repo.get_by!(Favorite, user_id: user.id, snippet_id: snippet.id)
 
-          {:ok, {:favorited, favorite}}
-        end)
-
-      favorite ->
-        Repo.transact(fn ->
-          {:ok, _} = Repo.delete(favorite)
+          {:ok, _} = Repo.delete(existing)
 
           from(s in Snippet, where: s.id == ^snippet.id)
           |> Repo.update_all(inc: [favorite_count: -1])
 
           {:ok, :unfavorited}
         end)
+
+      {:ok, favorite} ->
+        Repo.transaction(fn ->
+          from(s in Snippet, where: s.id == ^snippet.id)
+          |> Repo.update_all(inc: [favorite_count: 1])
+
+          {:ok, {:favorited, favorite}}
+        end)
+
+      {:error, changeset} ->
+        {:error, changeset}
     end
   end
 
@@ -207,7 +255,10 @@ defmodule Loomkin.Social do
 
   def follow(follower, followed) do
     %Follow{}
-    |> Follow.changeset(%{follower_id: follower.id, followed_id: followed.id})
+    |> Follow.changeset(%{})
+    |> Ecto.Changeset.put_change(:follower_id, follower.id)
+    |> Ecto.Changeset.put_change(:followed_id, followed.id)
+    |> Follow.validate_not_self_follow()
     |> Repo.insert()
   end
 

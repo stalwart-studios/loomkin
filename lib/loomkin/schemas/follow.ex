@@ -5,23 +5,19 @@ defmodule Loomkin.Schemas.Follow do
   @primary_key {:id, :binary_id, autogenerate: true}
 
   schema "follows" do
-    belongs_to :follower, Loomkin.Accounts.User
-    belongs_to :followed, Loomkin.Accounts.User
+    belongs_to :follower, Loomkin.Accounts.User, type: :id
+    belongs_to :followed, Loomkin.Accounts.User, type: :id
 
     timestamps(type: :utc_datetime)
   end
 
-  @required_fields ~w(follower_id followed_id)a
-
   def changeset(follow, attrs) do
     follow
-    |> cast(attrs, @required_fields)
-    |> validate_required(@required_fields)
-    |> validate_not_self_follow()
+    |> cast(attrs, [])
     |> unique_constraint([:follower_id, :followed_id])
   end
 
-  defp validate_not_self_follow(changeset) do
+  def validate_not_self_follow(changeset) do
     follower_id = get_field(changeset, :follower_id)
     followed_id = get_field(changeset, :followed_id)
 

@@ -12,29 +12,50 @@ defmodule LoomkinWeb.ProfileLive do
   alias Loomkin.Social
 
   def mount(%{"username" => username}, _session, socket) do
-    profile_user = Accounts.get_user_by_username!(username)
+    case Accounts.get_user_by_username(username) do
+      nil ->
+        {:ok,
+         socket
+         |> put_flash(:error, "User not found.")
+         |> push_navigate(to: ~p"/explore")}
 
-    snippets =
-      Social.list_user_snippets(profile_user, visibility: :public, limit: 30)
-      |> Repo.preload(:user)
+      profile_user ->
+        socket =
+          if connected?(socket) do
+            snippets =
+              Social.list_user_snippets(profile_user, visibility: :public, limit: 30)
+              |> Repo.preload(:user)
 
-    follower_count = Social.follower_count(profile_user)
-    following_count = Social.following_count(profile_user)
-    counts = Social.snippet_counts_by_type(profile_user)
+            follower_count = Social.follower_count(profile_user)
+            following_count = Social.following_count(profile_user)
+            counts = Social.snippet_counts_by_type(profile_user)
 
-    socket =
-      socket
-      |> assign(
-        page_title: "@#{username}",
-        profile_user: profile_user,
-        active_type: :all,
-        follower_count: follower_count,
-        following_count: following_count,
-        snippet_counts: counts
-      )
-      |> stream(:snippets, snippets, dom_id: &snippet_dom_id/1)
+            socket
+            |> assign(
+              follower_count: follower_count,
+              following_count: following_count,
+              snippet_counts: counts
+            )
+            |> stream(:snippets, snippets, dom_id: &snippet_dom_id/1)
+          else
+            socket
+            |> assign(
+              follower_count: 0,
+              following_count: 0,
+              snippet_counts: %{skills: 0, prompts: 0, kin_agents: 0, chat_logs: 0}
+            )
+            |> stream(:snippets, [], dom_id: &snippet_dom_id/1)
+          end
 
-    {:ok, socket}
+        socket =
+          assign(socket,
+            page_title: "@#{username}",
+            profile_user: profile_user,
+            active_type: :all
+          )
+
+        {:ok, socket}
+    end
   end
 
   defp snippet_dom_id(%{id: id}), do: "profile-snippet-#{id}"

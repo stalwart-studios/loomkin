@@ -1,6 +1,8 @@
 defmodule LoomkinWeb.UserSettingsController do
   use LoomkinWeb, :controller
 
+  import Phoenix.Component, only: [to_form: 1]
+
   alias Loomkin.Accounts
   alias LoomkinWeb.UserAuth
 
@@ -33,7 +35,7 @@ defmodule LoomkinWeb.UserSettingsController do
         |> redirect(to: ~p"/users/settings")
 
       changeset ->
-        render(conn, :edit, email_changeset: %{changeset | action: :insert})
+        render(conn, :edit, email_form: to_form(%{changeset | action: :insert}))
     end
   end
 
@@ -49,7 +51,7 @@ defmodule LoomkinWeb.UserSettingsController do
         |> UserAuth.log_in_user(user)
 
       {:error, changeset} ->
-        render(conn, :edit, password_changeset: changeset)
+        render(conn, :edit, password_form: to_form(changeset))
     end
   end
 
@@ -71,7 +73,7 @@ defmodule LoomkinWeb.UserSettingsController do
     user = conn.assigns.current_scope.user
 
     conn
-    |> assign(:email_changeset, Accounts.change_user_email(user))
-    |> assign(:password_changeset, Accounts.change_user_password(user))
+    |> assign(:email_form, to_form(Accounts.change_user_email(user)))
+    |> assign(:password_form, to_form(Accounts.change_user_password(user)))
   end
 end

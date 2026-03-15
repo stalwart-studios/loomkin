@@ -60,7 +60,7 @@ defmodule Loomkin.Schemas.Snippet do
     end
   end
 
-  defp slugify(title) do
+  def slugify(title) do
     title
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9\s-]/, "")

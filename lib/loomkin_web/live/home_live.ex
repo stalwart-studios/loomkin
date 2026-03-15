@@ -14,56 +14,78 @@ defmodule LoomkinWeb.HomeLive do
       {:ok, push_navigate(socket, to: ~p"/projects")}
     else
       user = socket.assigns.current_scope && socket.assigns.current_scope.user
-      projects = Persistence.list_projects()
-
-      {snippet_counts, favorites, recent_sessions} =
-        if user do
-          counts = Social.snippet_counts_by_type(user)
-
-          favs =
-            Social.list_favorites(user, limit: 5)
-            |> Enum.map(fn fav -> fav.snippet end)
-            |> Repo.preload(:user)
-
-          sessions = Persistence.list_sessions(limit: 5)
-
-          {counts, favs, sessions}
-        else
-          {%{skills: 0, prompts: 0, kin_agents: 0, chat_logs: 0}, [], []}
-        end
-
-      community_feed =
-        Social.list_public_snippets(limit: 10, sort: :recent)
-        |> Repo.preload(:user)
-
-      trending =
-        Social.trending_snippets(limit: 5)
-        |> Repo.preload(:user)
-
-      total_snippets =
-        snippet_counts.skills + snippet_counts.prompts + snippet_counts.kin_agents +
-          snippet_counts.chat_logs
-
-      has_content = total_snippets > 0 or community_feed != [] or projects != []
 
       socket =
         socket
         |> assign(
           page_title: "Home",
           user: user,
-          snippet_counts: snippet_counts,
-          total_snippets: total_snippets,
-          favorites: favorites,
-          community_feed: community_feed,
-          trending: trending,
-          recent_sessions: recent_sessions,
-          has_content: has_content
+          snippet_counts: %{skills: 0, prompts: 0, kin_agents: 0, chat_logs: 0},
+          total_snippets: 0,
+          recent_sessions: [],
+          has_content: false
         )
-        |> stream(:projects, projects, dom_id: &project_dom_id/1)
+        |> stream(:projects, [], dom_id: &project_dom_id/1)
+        |> stream(:community_feed, [], dom_id: &feed_dom_id/1)
+        |> stream(:trending, [], dom_id: &trending_dom_id/1)
+        |> stream(:favorites, [], dom_id: &favorite_dom_id/1)
+
+      socket =
+        if connected?(socket) do
+          projects = Persistence.list_projects()
+
+          {snippet_counts, favorites, recent_sessions} =
+            if user do
+              counts = Social.snippet_counts_by_type(user)
+
+              favs =
+                Social.list_favorites(user, limit: 5)
+                |> Enum.map(fn fav -> fav.snippet end)
+                |> Repo.preload(:user)
+
+              sessions = Persistence.list_sessions(limit: 5)
+
+              {counts, favs, sessions}
+            else
+              {%{skills: 0, prompts: 0, kin_agents: 0, chat_logs: 0}, [], []}
+            end
+
+          community_feed =
+            Social.list_public_snippets(limit: 10, sort: :recent)
+            |> Repo.preload(:user)
+
+          trending =
+            Social.trending_snippets(limit: 5)
+            |> Repo.preload(:user)
+
+          total_snippets =
+            snippet_counts.skills + snippet_counts.prompts + snippet_counts.kin_agents +
+              snippet_counts.chat_logs
+
+          has_content = total_snippets > 0 or community_feed != [] or projects != []
+
+          socket
+          |> assign(
+            snippet_counts: snippet_counts,
+            total_snippets: total_snippets,
+            recent_sessions: recent_sessions,
+            has_content: has_content
+          )
+          |> stream(:projects, projects, dom_id: &project_dom_id/1, reset: true)
+          |> stream(:community_feed, community_feed, dom_id: &feed_dom_id/1, reset: true)
+          |> stream(:trending, trending, dom_id: &trending_dom_id/1, reset: true)
+          |> stream(:favorites, favorites, dom_id: &favorite_dom_id/1, reset: true)
+        else
+          socket
+        end
 
       {:ok, socket}
     end
   end
+
+  defp feed_dom_id(%{id: id}), do: "home-feed-#{id}"
+  defp trending_dom_id(%{id: id}), do: "home-trending-#{id}"
+  defp favorite_dom_id(%{id: id}), do: "home-fav-#{id}"
 
   defp project_dom_id(%{project_path: path}) do
     "home-project-" <> Base.url_encode64(path, padding: false)
@@ -77,7 +99,13 @@ defmodule LoomkinWeb.HomeLive do
       <.top_nav current_scope={assigns[:current_scope]} />
 
       <%= if @has_content do %>
-        <.populated_layout {assigns} />
+        <.populated_layout
+          user={@user}
+          total_snippets={@total_snippets}
+          snippet_counts={@snippet_counts}
+          recent_sessions={@recent_sessions}
+          streams={@streams}
+        />
       <% else %>
         <.empty_state user={@user} />
       <% end %>
@@ -176,7 +204,8 @@ defmodule LoomkinWeb.HomeLive do
                 class="w-7 h-7 rounded-full bg-surface-3 border border-border-subtle hover:border-border-hover flex items-center justify-center transition-all"
               >
                 <span class="text-[10px] font-bold text-gray-400">
-                  {String.first(@current_scope.user.username || @current_scope.user.email)
+                  {((@current_scope.user.username || @current_scope.user.email || "?")
+                    |> String.first() || "?")
                   |> String.upcase()}
                 </span>
               </.link>
@@ -373,6 +402,12 @@ defmodule LoomkinWeb.HomeLive do
 
   # ── Populated Layout — Dense, feed-first ───────────────────────────
 
+  attr :user, :any, default: nil
+  attr :total_snippets, :integer, required: true
+  attr :snippet_counts, :map, required: true
+  attr :recent_sessions, :list, required: true
+  attr :streams, :map, required: true
+
   defp populated_layout(assigns) do
     ~H"""
     <div class="relative z-10 max-w-6xl mx-auto px-5 py-6">
@@ -384,7 +419,8 @@ defmodule LoomkinWeb.HomeLive do
             <div class="flex items-center gap-2.5 mb-4">
               <div class="w-8 h-8 rounded-full bg-brand/15 border border-brand/25 flex items-center justify-center">
                 <span class="text-xs font-bold text-brand">
-                  {String.first(@user.username || @user.email) |> String.upcase()}
+                  {((@user.username || @user.email || "?") |> String.first() || "?")
+                  |> String.upcase()}
                 </span>
               </div>
               <div class="min-w-0">
@@ -456,20 +492,25 @@ defmodule LoomkinWeb.HomeLive do
           </div>
 
           <%!-- Favorites --%>
-          <div :if={@favorites != []} class="animate-fade-in" style="animation-delay: 150ms">
+          <div class="animate-fade-in" style="animation-delay: 150ms">
             <h3 class="text-[10px] font-semibold text-gray-600 uppercase tracking-widest mb-2">
               Starred
             </h3>
-            <div class="space-y-0.5">
-              <button
-                :for={fav <- @favorites}
-                class="flex items-center gap-2 px-2 py-1.5 -mx-2 rounded-md w-full text-left hover:bg-surface-2 transition-colors group"
+            <div id="home-favorites" phx-update="stream" class="space-y-0.5">
+              <div class="hidden only:block py-3">
+                <p class="text-xs text-gray-600">No favorites yet</p>
+              </div>
+              <.link
+                :for={{id, fav} <- @streams.favorites}
+                id={id}
+                navigate={~p"/@#{fav.user.username}/#{fav.slug}"}
+                class="flex items-center gap-2 px-2 py-1.5 -mx-2 rounded-md hover:bg-surface-2 transition-colors group"
               >
                 <span class="hero-star-solid w-3 h-3 text-amber-500/60 shrink-0" />
                 <span class="text-xs text-gray-400 group-hover:text-white truncate transition-colors">
                   {fav.title}
                 </span>
-              </button>
+              </.link>
             </div>
           </div>
 
@@ -511,8 +552,8 @@ defmodule LoomkinWeb.HomeLive do
             </.link>
           </div>
 
-          <%= if @community_feed == [] do %>
-            <div class="glass rounded-xl p-8 text-center">
+          <div id="home-community-feed" phx-update="stream" class="space-y-2">
+            <div class="hidden only:block glass rounded-xl p-8 text-center">
               <p class="text-gray-500 text-sm mb-2">No public snippets yet</p>
               <p class="text-gray-600 text-xs mb-4">
                 Be the first to share something with the community
@@ -528,25 +569,25 @@ defmodule LoomkinWeb.HomeLive do
                 <span class="hero-plus-mini w-3.5 h-3.5" /> Create a snippet
               </.link>
             </div>
-          <% else %>
-            <div class="space-y-2">
-              <.feed_card :for={snippet <- @community_feed} snippet={snippet} />
-            </div>
-          <% end %>
+            <.feed_card :for={{id, snippet} <- @streams.community_feed} id={id} snippet={snippet} />
+          </div>
         </main>
 
         <%!-- Right sidebar — trending --%>
         <aside class="lg:col-span-3">
           <div class="sticky top-16">
-            <div :if={@trending != []} class="animate-fade-in" style="animation-delay: 100ms">
+            <div class="animate-fade-in" style="animation-delay: 100ms">
               <h3 class="text-[10px] font-semibold text-gray-600 uppercase tracking-widest mb-3">
                 Trending
               </h3>
-              <div class="space-y-1">
+              <div id="home-trending" phx-update="stream" class="space-y-1">
+                <div class="hidden only:block py-2">
+                  <p class="text-xs text-gray-600">Nothing trending yet</p>
+                </div>
                 <.trending_item
-                  :for={{item, idx} <- Enum.with_index(@trending, 1)}
+                  :for={{id, item} <- @streams.trending}
+                  id={id}
                   item={item}
-                  rank={idx}
                 />
               </div>
             </div>
@@ -607,6 +648,7 @@ defmodule LoomkinWeb.HomeLive do
 
   # ── Feed Card ──────────────────────────────────────────────────────
 
+  attr :id, :string, required: true
   attr :snippet, :map, required: true
 
   defp feed_card(assigns) do
@@ -618,14 +660,17 @@ defmodule LoomkinWeb.HomeLive do
     assigns = assign(assigns, :username, username)
 
     ~H"""
-    <div class={[
-      "glass-subtle rounded-lg px-4 py-3.5 group",
-      "hover:border-border-hover transition-all"
-    ]}>
+    <div
+      id={@id}
+      class={[
+        "glass-subtle rounded-lg px-4 py-3.5 group",
+        "hover:border-border-hover transition-all"
+      ]}
+    >
       <div class="flex items-start gap-3">
         <div class="w-7 h-7 rounded-full bg-surface-3 border border-border-subtle flex items-center justify-center shrink-0 mt-0.5">
           <span class="text-[10px] font-medium text-gray-500">
-            {String.first(@username) |> String.upcase()}
+            {((@username || "?") |> String.first() || "?") |> String.upcase()}
           </span>
         </div>
         <div class="min-w-0 flex-1">
@@ -690,8 +735,8 @@ defmodule LoomkinWeb.HomeLive do
 
   # ── Trending Item ──────────────────────────────────────────────────
 
+  attr :id, :string, required: true
   attr :item, :map, required: true
-  attr :rank, :integer, required: true
 
   defp trending_item(assigns) do
     username =
@@ -700,13 +745,10 @@ defmodule LoomkinWeb.HomeLive do
     assigns = assign(assigns, :username, username)
 
     ~H"""
-    <div class="flex items-center gap-2.5 px-2 py-2 -mx-2 rounded-md hover:bg-surface-2 transition-colors group">
-      <span class={[
-        "w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold shrink-0",
-        if(@rank <= 3, do: "text-brand", else: "text-gray-600")
-      ]}>
-        {@rank}
-      </span>
+    <div
+      id={@id}
+      class="flex items-center gap-2.5 px-2 py-2 -mx-2 rounded-md hover:bg-surface-2 transition-colors group"
+    >
       <div class="min-w-0 flex-1">
         <p class="text-xs text-gray-300 truncate group-hover:text-white transition-colors">
           {@item.title}

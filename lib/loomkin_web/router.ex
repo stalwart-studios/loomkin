@@ -58,17 +58,23 @@ defmodule LoomkinWeb.Router do
   scope "/", LoomkinWeb do
     pipe_through [:browser]
 
-    live "/explore", ExploreLive, :index
-    live "/@:username", ProfileLive, :show
-    live "/@:username/:slug", SnippetLive, :show
+    live_session :public_social,
+      on_mount: [{LoomkinWeb.UserAuth, :mount_current_scope}] do
+      live "/explore", ExploreLive, :index
+      live "/@:username", ProfileLive, :show
+      live "/@:username/:slug", SnippetLive, :show
+    end
   end
 
   # Authenticated social routes — require login in deployed mode
   scope "/", LoomkinWeb do
     pipe_through [:browser, :require_auth_if_multi_tenant]
 
-    live "/snippets/new", SnippetLive, :new
-    live "/snippets/:id/edit", SnippetLive, :edit
+    live_session :authenticated_social,
+      on_mount: [{LoomkinWeb.UserAuth, :require_authenticated_user}] do
+      live "/snippets/new", SnippetLive, :new
+      live "/snippets/:id/edit", SnippetLive, :edit
+    end
   end
 
   # Homepage — accessible to everyone (authenticated or not)
@@ -77,18 +83,24 @@ defmodule LoomkinWeb.Router do
   scope "/", LoomkinWeb do
     pipe_through [:browser]
 
-    live "/", HomeLive, :index
+    live_session :home,
+      on_mount: [{LoomkinWeb.UserAuth, :mount_current_scope}] do
+      live "/", HomeLive, :index
+    end
   end
 
   # App routes — gated by multi-tenant auth (passes through in local mode)
   scope "/", LoomkinWeb do
     pipe_through [:browser, :require_auth_if_multi_tenant]
 
-    live "/projects", ProjectPickerLive, :index
-    live "/sessions/new", WorkspaceLive, :new
-    live "/sessions/:session_id", WorkspaceLive, :show
-    live "/dashboard", CostDashboardLive, :index
-    live "/settings", SettingsLive, :index
+    live_session :app,
+      on_mount: [{LoomkinWeb.UserAuth, :mount_current_scope}] do
+      live "/projects", ProjectPickerLive, :index
+      live "/sessions/new", WorkspaceLive, :new
+      live "/sessions/:session_id", WorkspaceLive, :show
+      live "/dashboard", CostDashboardLive, :index
+      live "/settings", SettingsLive, :index
+    end
   end
 
   if Mix.env() in [:dev, :test] do
