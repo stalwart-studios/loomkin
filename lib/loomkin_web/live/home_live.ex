@@ -351,7 +351,11 @@ defmodule LoomkinWeb.HomeLive do
   attr :snippet, :map, required: true
 
   defp feed_card(assigns) do
-    username = if Ecto.assoc_loaded?(assigns.snippet.user), do: assigns.snippet.user.username, else: "unknown"
+    username =
+      if Ecto.assoc_loaded?(assigns.snippet.user),
+        do: assigns.snippet.user.username,
+        else: "unknown"
+
     assigns = assign(assigns, :username, username)
 
     ~H"""
@@ -383,7 +387,9 @@ defmodule LoomkinWeb.HomeLive do
                 <span class="hero-arrow-path-mini w-3 h-3" /> {@snippet.fork_count}
               </span>
             </div>
-            <span class="text-gray-600 text-xs ml-auto">{format_relative_time(@snippet.inserted_at)}</span>
+            <span class="text-gray-600 text-xs ml-auto">
+              {format_relative_time(@snippet.inserted_at)}
+            </span>
           </div>
           <p :if={@snippet.description} class="text-gray-500 text-xs mt-1.5 line-clamp-2">
             {@snippet.description}
@@ -441,7 +447,9 @@ defmodule LoomkinWeb.HomeLive do
   attr :rank, :integer, required: true
 
   defp trending_row(assigns) do
-    username = if Ecto.assoc_loaded?(assigns.item.user), do: assigns.item.user.username, else: "unknown"
+    username =
+      if Ecto.assoc_loaded?(assigns.item.user), do: assigns.item.user.username, else: "unknown"
+
     assigns = assign(assigns, :username, username)
 
     ~H"""
@@ -493,7 +501,9 @@ defmodule LoomkinWeb.HomeLive do
             if(session.status == :active, do: "bg-emerald-400", else: "bg-gray-600")
           ]} />
           <span class="truncate max-w-[200px]">{session.title || "Untitled"}</span>
-          <span class="text-gray-600 text-xs shrink-0">{format_relative_time(session.updated_at)}</span>
+          <span class="text-gray-600 text-xs shrink-0">
+            {format_relative_time(session.updated_at)}
+          </span>
         </.link>
       </div>
     </section>
