@@ -166,6 +166,48 @@ defmodule LoomkinWeb.UserAuth do
     put_session(conn, :user_token, token)
   end
 
+  # ── LiveView on_mount hooks ──────────────────────────────────────
+
+  @doc """
+  LiveView on_mount hook that assigns current_scope from session.
+
+  Use in the `live_view` macro or per-LiveView:
+
+      on_mount {LoomkinWeb.UserAuth, :mount_current_scope}
+  """
+  def on_mount(:mount_current_scope, _params, session, socket) do
+    socket = mount_current_scope(socket, session)
+    {:cont, socket}
+  end
+
+  def on_mount(:require_authenticated_user, _params, session, socket) do
+    socket = mount_current_scope(socket, session)
+
+    if socket.assigns.current_scope && socket.assigns.current_scope.user do
+      {:cont, socket}
+    else
+      socket =
+        socket
+        |> Phoenix.LiveView.put_flash(:error, "You must log in to access this page.")
+        |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
+
+      {:halt, socket}
+    end
+  end
+
+  defp mount_current_scope(socket, session) do
+    Phoenix.Component.assign_new(socket, :current_scope, fn ->
+      if user_token = session["user_token"] do
+        case Accounts.get_user_by_session_token(user_token) do
+          {user, _token_inserted_at} -> Scope.for_user(user)
+          nil -> Scope.for_user(nil)
+        end
+      else
+        Scope.for_user(nil)
+      end
+    end)
+  end
+
   @doc """
   Plug that enforces authentication only when multi-tenant mode is enabled.
 
