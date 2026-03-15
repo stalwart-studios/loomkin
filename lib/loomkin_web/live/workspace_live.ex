@@ -92,7 +92,11 @@ defmodule LoomkinWeb.WorkspaceLive do
         # Leader approval gate pending (set when lead agent hits approval gate, nil otherwise)
         leader_approval_pending: nil,
         debug_signals: [],
-        debug_panel_open: false
+        debug_panel_open: false,
+        # Social presence: online followed users
+        live_friends: [],
+        social_panel_open: false,
+        social_activity: []
       )
       |> stream(:comms_events, [], limit: -500)
 
@@ -228,6 +232,29 @@ defmodule LoomkinWeb.WorkspaceLive do
 
         TeamBroadcaster.subscribe(broadcaster, self())
         socket = assign(socket, broadcaster: broadcaster, global_signals_subscribed: true)
+
+        # Subscribe to social presence when multi-tenant with a logged-in user
+        socket =
+          if Application.get_env(:loomkin, :multi_tenant) do
+            scope = socket.assigns[:current_scope]
+            user = scope && scope.user
+
+            if user do
+              Phoenix.PubSub.subscribe(Loomkin.PubSub, LoomkinWeb.Presence.global_topic())
+
+              LoomkinWeb.Presence.track_user(self(), user, %{
+                page: :workspace,
+                session_id: session_id
+              })
+
+              activity = Loomkin.Social.following_activity(user, limit: 10)
+              assign(socket, live_friends: build_live_friends(user), social_activity: activity)
+            else
+              socket
+            end
+          else
+            socket
+          end
 
         ensure_index_started(project_path)
 
@@ -697,6 +724,10 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, update(socket, :debug_panel_open, &(!&1))}
   end
 
+  def handle_event("toggle_social_panel", _params, socket) do
+    {:noreply, update(socket, :social_panel_open, &(!&1))}
+  end
+
   @valid_trust_presets ~w(strict balanced autonomous full_trust)
   def handle_event("set_trust_preset", %{"preset" => preset_str}, socket)
       when preset_str in @valid_trust_presets do
@@ -764,6 +795,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       |> restore_assign(:inspector_mode, params["inspector_mode"], ~w(auto_follow pinned))
       |> restore_assign_bool(:collapsed_inspector, params["collapsed_inspector"])
       |> restore_assign_string(:focused_agent, params["focused_agent"])
+      |> restore_assign_bool(:social_panel_open, params["social_panel_open"])
 
     {:noreply, socket}
   end
@@ -3600,6 +3632,18 @@ defmodule LoomkinWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
+  # Social presence — rebuild live_friends when anyone joins/leaves
+  def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket) do
+    scope = socket.assigns[:current_scope]
+    user = scope && scope.user
+
+    if user do
+      {:noreply, assign(socket, live_friends: build_live_friends(user))}
+    else
+      {:noreply, socket}
+    end
+  end
+
   # Catch-all
   def handle_info(msg, socket) do
     require Logger
@@ -3657,6 +3701,7 @@ defmodule LoomkinWeb.WorkspaceLive do
       data-focused-agent={@focused_agent}
       data-inspector-mode={@inspector_mode}
       data-collapsed-inspector={to_string(@collapsed_inspector)}
+      data-social-panel-open={to_string(@social_panel_open)}
       class="hidden"
     />
 
@@ -3855,6 +3900,24 @@ defmodule LoomkinWeb.WorkspaceLive do
             <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
               <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM14.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.569-1.175 6.002 6.002 0 0111.908 0c.058.467-.172.92-.57 1.174A9.953 9.953 0 017 18a9.953 9.953 0 01-5.385-1.572zM14.5 16h-.106c.07-.297.088-.611.048-.933a7.47 7.47 0 00-1.588-3.755 4.502 4.502 0 015.874 2.636.818.818 0 01-.36.98A7.465 7.465 0 0114.5 16z" />
             </svg>
+          </button>
+
+          <%!-- Social Panel (deployed mode only) --%>
+          <button
+            :if={@live_friends != [] || @social_panel_open}
+            phx-click="toggle_social_panel"
+            class={[
+              "flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] transition-colors hover:bg-surface-2",
+              if(@social_panel_open, do: "text-brand", else: "text-muted")
+            ]}
+            data-tooltip="Social"
+            aria-label="Social panel"
+          >
+            <.icon name="hero-user-group-mini" class="w-3.5 h-3.5" />
+            <span
+              :if={@live_friends != [] && !@social_panel_open}
+              class="w-1.5 h-1.5 rounded-full bg-emerald-400"
+            />
           </button>
 
           <%!-- Session switcher --%>
@@ -4109,6 +4172,14 @@ defmodule LoomkinWeb.WorkspaceLive do
             team_id={@active_team_id}
           />
         <% end %>
+
+        <%!-- Social Side Panel (deployed mode only) --%>
+        <LoomkinWeb.SocialPanelComponent.social_panel
+          :if={@social_panel_open || @live_friends != []}
+          open={@social_panel_open}
+          live_friends={@live_friends}
+          activity={@social_activity}
+        />
       </div>
 
       <%!-- Kin Management Panel --%>
@@ -5993,4 +6064,15 @@ defmodule LoomkinWeb.WorkspaceLive do
   end
 
   defp restore_assign_string(socket, _key, _value), do: socket
+
+  # Build the list of online users that the current user follows.
+  # Filters Presence data against the user's following list.
+  defp build_live_friends(user) do
+    following_ids =
+      Loomkin.Social.list_following(user)
+      |> MapSet.new(& &1.id)
+
+    LoomkinWeb.Presence.list_online_users()
+    |> Enum.filter(&MapSet.member?(following_ids, &1.user_id))
+  end
 end

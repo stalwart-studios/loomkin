@@ -1,5 +1,8 @@
 import Config
 
+# Multi-tenant mode is disabled in development (local single-user mode)
+config :loomkin, :multi_tenant, false
+
 # Use Docker Postgres port by default; override with DB_PORT for system-installed Postgres
 config :loomkin, Loomkin.Repo, port: String.to_integer(System.get_env("DB_PORT") || "5488")
 

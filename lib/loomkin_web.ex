@@ -68,6 +68,7 @@ defmodule LoomkinWeb do
       import LoomkinWeb.CoreComponents
 
       alias Phoenix.LiveView.JS
+      alias LoomkinWeb.Layouts
 
       unquote(verified_routes())
     end

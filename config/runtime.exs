@@ -3,6 +3,9 @@ import Config
 # Runtime configuration for Loomkin
 # Environment variables can override compile-time config here
 
+# Multi-tenant mode: enable for deployed/hosted mode, disable for local single-user mode
+config :loomkin, :multi_tenant, System.get_env("MULTI_TENANT", "false") == "true"
+
 if model = System.get_env("LOOMKIN_MODEL") do
   config :loomkin, default_model: model
 end
